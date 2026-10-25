@@ -1,6 +1,7 @@
 const db = require('../config/database');
 const { Resend } = require('resend');
-const resend = new Resend(process.env.RESEND_API_KEY || process.env.RESEND_API_KEY || '');
+const resendApiKey = process.env.RESEND_API_KEY;
+const resend = resendApiKey ? new Resend(resendApiKey) : null;
 const codeService = require('../services/codeService');
 
 const login = async (req, res) => {
