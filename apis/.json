@@ -1,0 +1,130 @@
+Estruturas de exiibição de dados
+
+{
+	"pilot@data":{
+		"name":"",
+		"pilot_uid":0,
+		"state":{"dead":"n","docked":"y"},
+		"location":{"node":"","station":""},
+		"ranking":{
+			"kills":0,
+			"deaths":0,
+			"assists":0,
+			"position":0,
+			"arcan_rp":0,
+			"dissident_rp":0,
+			"miner_rp":0,
+			"explorer_rp":0,
+			"engineer_rp":0,
+			"mercenery_rp":0,
+			"merchant_rp":0
+		}
+	}
+}
+
+{
+	"vessel@data":{
+		"armor":0,
+		"engine":0,
+		"sensors":0,
+		"life_support":0,
+		"inertial_damper":0,
+		"vessel_uid":0,
+		"item_code":0
+	}
+}
+
+{
+	"vessel@devices":[{
+		"slot":0,
+		"item_code":0
+	}]
+}
+
+{
+	"vessel@missiles":[{
+		"slot":0,
+		"ensilage":0,
+		"item_code":0
+	}]
+}
+
+{
+	"vessel@utilities":[{
+		"slot":0,
+		"stacking":0,
+		"item_code":0
+	}]
+}
+
+{
+	"vessel@weapons":[{
+		"slot":0,
+		"magazine":0,
+		"item_code":0
+	}]
+}
+
+{
+	"market@data":{
+		"name":"",
+		"about":"",
+		"market_uid":0,
+		"items":[{
+			"item_code":0,
+			"price":0,
+			"stock":0
+		}]
+	}
+}
+
+{
+	"container@data":{
+		"volume":0,
+		"container_uid":0,
+		"items":[{
+			"item_code":0,
+			"amount":0
+		}]
+	}
+}
+
+{
+	"craft@farms":[{
+		"item_code":0,
+		"time":0
+	}]
+}
+
+{
+	"craft@scheme":[{
+		"cost":0,
+		"time":0,
+		"item_code":0,
+		"scheme":[{
+			"item_code":0,
+			"amount":0
+		}]
+	}]
+}
+
+{
+	"wallet@data":{
+		"name":"",
+		"wallet_uid":0,
+		"credits":0,
+		"cash":0
+	}
+}
+
+{
+	"wallet@transaction":{
+		"type":"transfer",
+		"authentication":"",
+		"wallet_from":{"name":"","wallet_uid":0},
+		"wallet_to":{"name":"","wallet_uid":0},
+		"timestamp":0,
+		"credists":0,
+		"cash":0
+	}
+}

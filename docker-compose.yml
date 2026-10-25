@@ -1,0 +1,66 @@
+version: '3'
+
+networks:
+    orphans_pub:
+        driver: bridge
+
+services:
+    # APIs do jogo
+    apis:
+        build: ./apis
+        command: npm start
+        container_name: APIs
+        restart: always
+        ports:
+            - "8020:8020"
+        volumes:
+            - ./apis/src/:/usr/src/
+        environment:
+            - MARIADB_USER=root
+            - MARIADB_PASSWORD=root178592
+        networks:
+            - orphans_pub
+
+    # API de autenticação
+    auth:
+        build: ./auth
+        command: npm start
+        container_name: Auth
+        restart: always
+        ports:
+            - "8010:8010"
+        volumes:
+            - ./auth/src/:/usr/src/
+        environment:
+            - SECRET_KEY=039RBEn49TEdl_cdFiPupRE_QUAIo5lTLz3xyXdl1V8
+        networks:
+            - orphans_pub
+
+    # RabbitMQ
+    rabbitMQ:
+        image: rabbitmq:management-alpine
+        container_name: RabbitMQ
+        restart: always
+        ports:
+            - "5672:5672"
+            - "15672:15672"
+        volumes:
+            - ./rabbitmq/data/:/var/lib/rabbitmq/
+            - ./rabbitmq/log/:/var/log/rabbitmq/
+        networks:
+            - orphans_pub
+
+    # Maria DB
+    mariadb:
+        image: mariadb:latest
+        container_name: MariaDB
+        restart: always
+        ports:
+            - "3306:3306"
+        volumes:
+            - ./mariadb/data/:/var/lib/mysql/data/
+        environment:
+            - MARIADB_USER=root
+            - MARIADB_ROOT_PASSWORD=root178592
+        networks:
+            - orphans_pub

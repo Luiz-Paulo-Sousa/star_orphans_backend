@@ -1,0 +1,35 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Uploads & Storage (preserve directory structure)
+apis/src/storage/uploads/*
+!apis/src/storage/uploads/.gitkeep
+
+# Compiled Flutter Web assets (source code is tracked in star_orphans_app repository)
+apis/src/public/*
+!apis/src/public/.gitkeep
+
+# Environment and sensitive keys
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Database and message broker runtime data
+mariadb/data/
+mongodb/data/
+rabbitmq/data/
+rabbitmq/log/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.bak
+*.log

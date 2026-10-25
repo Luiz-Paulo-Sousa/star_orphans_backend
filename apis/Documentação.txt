@@ -1,0 +1,122 @@
+REQUISIÇÕES
+  {"api":"hangar@next","token":TOKEM} OU {"api":"hangar:prev","token":TOKEM}
+
+  Buscar os dados da sessão no REDIS usando o TOKEM 
+  Listar no banco de dados as naves que estão cadastradas na UID, NODE e STATION atual do jogador.
+  SELECT * WHERE `vessels` FROM `pilot_uid`='UID' AND `node`='NODE' AND `station`='STATION';
+  
+  Como sempre teremos uma unica nave selecionada voce pode desativar a nave atual e ativa a proxima nave da lista
+  UPDATE `vessels` SET `selected`=IF(`uid`='NEXT VESSEL UID','y','n') WHERE `pilot_uid`='UID' AND `node`='NODE' AND `station`='STATION';
+
+AO CONNECTAR
+
+  Buscar os dados da sessão no REDIS usando o TOKEN...
+  Desconectar se o TOKEM não estiver cadastrado no REDIS...
+  Se estiver cadastrado adicione o ID da conexão WebSocket no REDIS
+  {"ws":WEB_SOCKET_ID}
+  
+  Buscar no banco de dados a nave atual do jogador...
+  
+  SELECT
+    *
+  FROM
+    `vessels`
+  WHERE
+    `pilot_uid`='UID DO PILOTO'
+  ORDER BY
+    `docked` ASC
+  LIMIT 1;
+  
+  Listar todos os slots da nave
+
+
+REQUISIÇÃO
+  {"api":"@land","token":TOKEN}
+
+  Buscar os dados da sessão no REDIS usando o TOKEM...
+  
+  Atualiza a localização do piloto no banco de dados...
+  
+  UPDATE
+    `pilots`
+  SET
+    `node`='NODE ATUAL DO REDIS',
+    `station`='STATION ATUAL DO REDIS',
+    `docked`='y'
+  WHERE
+    `uid`='UID DO PILOTO';
+
+  Atualiza a localização da nave selecionada...
+  
+  UPDATE
+    `vessels`
+  SET
+    `node`='NODE ATUAL DO REDIS',
+    `station`='STATION ATUAL DO REDIS',
+    `armor`='ARMOR ATUAL DO REDIS',
+    `engine`='ENGINE ATUAL DO REDIS',
+    `sensors`='SENSORS ATUAL DO REDIS',
+    `life_support`='LIFE SUPPORT ATUAL DO REDIS',
+    `inertial_damper`='INERTIAL DAMPER ATUAL DO REDIS'
+  WHERE
+    `pilot_uid`='UID DO PILOTO' AND
+    `selected`='y';
+
+  Envia vessel@data ao cliente da sessão
+
+
+
+
+REQUISIÇÃO
+  {"api":"@launch","token":TOKEN}
+
+  Buscar os dados da sessão no REDIS usando o TOKEM...
+  
+  Atualiza a localização do piloto no banco de dados...
+  
+  UPDATE
+    `pilots`
+  SET
+    `node`='NODE ATUAL DO REDIS',
+    `station`='STATION ATUAL DO REDIS',
+    `docked`='y'
+  WHERE
+    `uid`='UID DO PILOTO';
+
+  Atualiza a localização da nave selecionada...
+  
+  UPDATE
+    `vessels`
+  SET
+    `node`='NODE ATUAL DO REDIS',
+    `station`='STATION ATUAL DO REDIS',
+    `armor`='ARMOR ATUAL DO REDIS',
+    `engine`='ENGINE ATUAL DO REDIS',
+    `sensors`='SENSORS ATUAL DO REDIS',
+    `life_support`='LIFE SUPPORT ATUAL DO REDIS',
+    `inertial_damper`='INERTIAL DAMPER ATUAL DO REDIS'
+  WHERE
+    `pilot_uid`='UID DO PILOTO' AND
+    `selected`='y';
+
+  Envia vessel@data ao cliente da sessão
+
+
+
+
+RESPOSTA
+{
+  "vessel@data":{
+    "armor":0,
+    "engine":0,
+    "sensors":0,
+    "life_support":0,
+    "inertial_damper":0,
+	"vessel_uid":0,
+    "item_code":0,
+    "weapons":[{"slot":0,"magazine":0,"item_code":0}],
+    "missiles":[{"slot":0,"ensilage":0,"item_code":0}],
+    "devices":[{"slot":0,"item_code":0}],
+    "utilities":[{"slot":0,"stacking":0,"item_code":0}]
+  }
+}
