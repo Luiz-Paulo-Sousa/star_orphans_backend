@@ -681,7 +681,7 @@ const checkUnreadStatus = async (req, res) => {
     try {
         conn = await db.getConnection();
         const rows = await conn.query(
-            'SELECT type, COUNT(*) as unread_count FROM messages WHERE uid_destination = ? AND is_read = 0 GROUP BY type',
+            'SELECT type, uid_channel, uid_subchannel, uid_origin, COUNT(*) as unread_count FROM messages WHERE uid_destination = ? AND is_read = 0 GROUP BY type, uid_channel, uid_subchannel, uid_origin',
             [pilotUid]
         );
         const list = Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : rows;
@@ -689,20 +689,30 @@ const checkUnreadStatus = async (req, res) => {
 
         let hasChatUnread = false;
         let hasEmailUnread = false;
+        const unreadDetails = [];
 
         for (const item of list) {
             const itemType = parseInt(item.type, 10);
             const count = Number(item.unread_count);
             if (itemType === 0 && count > 0) hasChatUnread = true;
             if (itemType === 1 && count > 0) hasEmailUnread = true;
+
+            unreadDetails.push({
+                type: itemType,
+                channel_uid: Number(item.uid_channel),
+                subchannel_uid: Number(item.uid_subchannel),
+                origin_uid: Number(item.uid_origin),
+                count: count
+            });
         }
 
-        console.log(`[Unread Status] Piloto ${pilotUid} - Resultado final: Chat=${hasChatUnread}, Email=${hasEmailUnread}`);
+        console.log(`[Unread Status] Piloto ${pilotUid} - Resultado final: Chat=${hasChatUnread}, Email=${hasEmailUnread}, Detalhes=${unreadDetails.length}`);
 
         return res.json({
             status: 'sucesso',
             has_unread_chat: hasChatUnread,
-            has_unread_email: hasEmailUnread
+            has_unread_email: hasEmailUnread,
+            unread_details: unreadDetails
         });
     } catch (error) {
         console.error('Erro ao verificar status de mensagens não lidas:', error);
