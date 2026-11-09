@@ -11,6 +11,9 @@ const authRoutes = require('./routes/authRoutes');
 const profileRoutes = require('./routes/profileRoutes');
 const recoveryRoutes = require('./routes/recoveryRoutes');
 const messageRoutes = require('./routes/messageRoutes');
+const hangarRoutes = require('./routes/hangarRoutes');
+const marketRoutes = require('./routes/marketRoutes');
+const factoryRoutes = require('./routes/factoryRoutes');
 const messageController = require('./controllers/messageController');
 
 const app = Express();
@@ -28,8 +31,13 @@ app.use(Express.json());
 const webPath = path.resolve(__dirname, 'public');
 app.use(Express.static(webPath));
 
-// Servir arquivos estáticos de uploads
-app.use('/uploads', Express.static(path.resolve(__dirname, 'storage', 'uploads')));
+// Servir arquivos estáticos de uploads, avatares, itens e hologramas
+const storagePath = path.resolve(__dirname, 'storage');
+app.use('/uploads', Express.static(path.resolve(storagePath, 'uploads')));
+app.use('/item-icons', Express.static(path.resolve(storagePath, 'items_128x')));
+app.use('/holograms', Express.static(path.resolve(storagePath, 'holograms')));
+app.use('/hologramas', Express.static(path.resolve(storagePath, 'holograms')));
+app.use('/storage', Express.static(storagePath));
 
 // Rotas de prioridade máxima para mensagens não lidas e marcação de leitura
 app.get('/api/messages/unread-status/:pilotUid', messageController.checkUnreadStatus);
@@ -45,6 +53,12 @@ app.use('/', profileRoutes);
 app.use('/', recoveryRoutes);
 app.use('/', messageRoutes);
 app.use('/api', messageRoutes);
+app.use('/', hangarRoutes);
+app.use('/api', hangarRoutes);
+app.use('/', marketRoutes);
+app.use('/api', marketRoutes);
+app.use('/', factoryRoutes);
+app.use('/api', factoryRoutes);
 
 // Teste de DB global
 const db = require('./config/database');
@@ -72,6 +86,13 @@ app.get('*', (req, res, next) => {
         req.path.startsWith('/player-profile') ||
         req.path.startsWith('/upload-avatar') ||
         req.path.startsWith('/uploads') ||
+        req.path.startsWith('/item-icons') ||
+        req.path.startsWith('/holograms') ||
+        req.path.startsWith('/hologramas') ||
+        req.path.startsWith('/storage') ||
+        req.path.startsWith('/hangar') ||
+        req.path.startsWith('/market') ||
+        req.path.startsWith('/factory') ||
         req.path.startsWith('/test-db')
     ) {
         return next();

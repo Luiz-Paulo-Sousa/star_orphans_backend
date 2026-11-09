@@ -5,6 +5,8 @@ const getMessageChannels = async (req, res) => {
     let conn;
     try {
         conn = await db.getConnection();
+        // Garante que o canal 2 esteja nomeado como ÓRBITA no banco de dados
+        await conn.query("UPDATE message_channels SET description = 'ÓRBITA' WHERE uid = 2 AND description != 'ÓRBITA'");
         const rows = await conn.query('SELECT uid, description FROM message_channels ORDER BY uid ASC');
         const dataList = Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : rows;
         return res.json(dataList);
@@ -34,7 +36,7 @@ const getFactions = async (req, res) => {
 
 /**
  * Busca genérica de membros/subcanais para um canal específico
- * Suporta: 'sector', 'corporation', 'team', 'squad', 'contact', 'support'
+ * Suporta: 'orbit', 'corporation', 'team', 'squad', 'contact', 'support'
  */
 const getChannelMembers = async (req, res) => {
     const { channelType, pilotUid } = req.params;
@@ -68,7 +70,7 @@ const getChannelMembers = async (req, res) => {
             const corpName = corpList[0].corporation_name || 'Corporação';
 
             const membersRows = await conn.query(
-                `SELECT p.pilot_uid, p.pilot, p.orbit, p.sector, p.station, p.docked
+                `SELECT p.pilot_uid, p.pilot, p.orbit, p.station, p.docked
                  FROM corporation_members cm
                  INNER JOIN pilots p ON cm.pilot_uid = p.pilot_uid
                  WHERE cm.corporation_uid = ? AND cm.pilot_uid != ?`,
@@ -84,45 +86,45 @@ const getChannelMembers = async (req, res) => {
         }
 
         // -------------------------------------------------------------
-        // 2. CANAL DE SETOR (SECTOR)
+        // 2. CANAL DE ÓRBITA (ORBIT)
         // -------------------------------------------------------------
-        if (channelType === 'sector') {
+        if (channelType === 'orbit') {
             const pilotRows = await conn.query(
-                `SELECT sector, orbit FROM pilots WHERE pilot_uid = ?`,
+                `SELECT orbit FROM pilots WHERE pilot_uid = ?`,
                 [pilotUid]
             );
             const pilotData = Array.isArray(pilotRows) && Array.isArray(pilotRows[0]) ? pilotRows[0] : pilotRows;
 
             if (pilotData.length === 0) {
                 return res.json({
-                    channel_label: 'SETOR: DESCONHECIDO',
+                    channel_label: 'ÓRBITA: DESCONHECIDA',
                     channel_uid: 2,
                     pilots: []
                 });
             }
 
-            const sectorUid = pilotData[0].sector;
+            const orbitUid = pilotData[0].orbit;
 
-            // Busca o nome do setor na tabela 'sectors' (colunas 'id' e 'name')
-            const sectorRows = await conn.query(
-                `SELECT name FROM sectors WHERE id = ?`,
-                [sectorUid]
+            // Busca o nome da órbita na tabela 'orbits' (colunas 'id' e 'name')
+            const orbitRows = await conn.query(
+                `SELECT name FROM orbits WHERE id = ?`,
+                [orbitUid]
             );
-            const sectorData = Array.isArray(sectorRows) && Array.isArray(sectorRows[0]) ? sectorRows[0] : sectorRows;
-            const sectorName = sectorData.length > 0 ? sectorData[0].name.toUpperCase() : `SETOR #${sectorUid}`;
+            const orbitData = Array.isArray(orbitRows) && Array.isArray(orbitRows[0]) ? orbitRows[0] : orbitRows;
+            const orbitName = orbitData.length > 0 ? orbitData[0].name.toUpperCase() : `ÓRBITA #${orbitUid}`;
 
-            // Busca outros pilotos no mesmo setor (exceto o próprio operador)
+            // Busca outros pilotos na mesma órbita (exceto o próprio operador)
             const membersRows = await conn.query(
-                `SELECT pilot_uid, pilot, orbit, sector, station, docked
+                `SELECT pilot_uid, pilot, orbit, station, docked
                  FROM pilots
-                 WHERE sector = ? AND pilot_uid != ?`,
-                [sectorUid, pilotUid]
+                 WHERE orbit = ? AND pilot_uid != ?`,
+                [orbitUid, pilotUid]
             );
             const membersList = Array.isArray(membersRows) && Array.isArray(membersRows[0]) ? membersRows[0] : membersRows;
 
             return res.json({
-                channel_label: `SETOR: ${sectorName}`,
-                channel_uid: sectorUid,
+                channel_label: `ÓRBITA: ${orbitName}`,
+                channel_uid: orbitUid,
                 pilots: membersList
             });
         }
@@ -152,7 +154,7 @@ const getChannelMembers = async (req, res) => {
             const teamName = teamList[0].team_name || `Eq. #${teamUid}`;
 
             const membersRows = await conn.query(
-                `SELECT p.pilot_uid, p.pilot, p.orbit, p.sector, p.station, p.docked
+                `SELECT p.pilot_uid, p.pilot, p.orbit, p.station, p.docked
                  FROM team_members tm
                  INNER JOIN pilots p ON tm.pilot_uid = p.pilot_uid
                  WHERE tm.team_uid = ? AND tm.pilot_uid != ?`,
@@ -188,7 +190,7 @@ const getChannelMembers = async (req, res) => {
             const squadUid = squadList[0].squad_uid;
 
             const membersRows = await conn.query(
-                `SELECT p.pilot_uid, p.pilot, p.orbit, p.sector, p.station, p.docked
+                `SELECT p.pilot_uid, p.pilot, p.orbit, p.station, p.docked
                  FROM squads s
                  INNER JOIN pilots p ON s.pilot_uid = p.pilot_uid
                  WHERE s.squad_uid = ? AND s.pilot_uid != ?`,
@@ -208,7 +210,7 @@ const getChannelMembers = async (req, res) => {
         // -------------------------------------------------------------
         if (channelType === 'contact') {
             const contactsRows = await conn.query(
-                `SELECT p.pilot_uid, p.pilot, p.orbit, p.sector, p.station, p.docked
+                `SELECT p.pilot_uid, p.pilot, p.orbit, p.station, p.docked
                  FROM pilot_contacts pc
                  INNER JOIN pilots p ON pc.contact_uid = p.pilot_uid
                  WHERE pc.pilot_uid = ?`,
@@ -228,7 +230,7 @@ const getChannelMembers = async (req, res) => {
         // -------------------------------------------------------------
         if (channelType === 'support') {
             const supportRows = await conn.query(
-                `SELECT uid_subchannel AS pilot_uid, description AS pilot, 0 AS orbit, '' AS sector, '' AS station, 0 AS docked
+                `SELECT uid_subchannel AS pilot_uid, description AS pilot, 0 AS orbit, '' AS station, 0 AS docked
                  FROM suport
                  WHERE uid_channel = 7`,
                 []
@@ -343,11 +345,11 @@ const sendChannelBroadcastMessage = async (req, res) => {
             targetPilots = Array.isArray(membersRows) && Array.isArray(membersRows[0]) ? membersRows[0] : membersRows;
 
         // -------------------------------------------------------------
-        // 2. TRANSMISSÃO PARA O SETOR
+        // 2. TRANSMISSÃO PARA A ÓRBITA
         // -------------------------------------------------------------
-        } else if (channel_type === 'sector' || !channel_type) {
+        } else if (channel_type === 'orbit' || !channel_type) {
             const senderRows = await conn.query(
-                'SELECT sector FROM pilots WHERE pilot_uid = ?',
+                'SELECT orbit FROM pilots WHERE pilot_uid = ?',
                 [sender_id]
             );
             const senderList = Array.isArray(senderRows) && Array.isArray(senderRows[0]) ? senderRows[0] : senderRows;
@@ -356,15 +358,15 @@ const sendChannelBroadcastMessage = async (req, res) => {
                 return res.status(404).json({ error: 'Piloto remetente não encontrado.' });
             }
 
-            const currentSector = senderList[0].sector;
+            const currentOrbit = senderList[0].orbit;
             finalChannelUid = channel_id || 2;
-            finalSubchannelUid = subchannel_id || currentSector;
+            finalSubchannelUid = subchannel_id || currentOrbit;
 
-            const sectorPilotsRows = await conn.query(
-                'SELECT pilot_uid FROM pilots WHERE sector = ?',
-                [currentSector]
+            const orbitPilotsRows = await conn.query(
+                'SELECT pilot_uid FROM pilots WHERE orbit = ?',
+                [currentOrbit]
             );
-            targetPilots = Array.isArray(sectorPilotsRows) && Array.isArray(sectorPilotsRows[0]) ? sectorPilotsRows[0] : sectorPilotsRows;
+            targetPilots = Array.isArray(orbitPilotsRows) && Array.isArray(orbitPilotsRows[0]) ? orbitPilotsRows[0] : orbitPilotsRows;
 
         // -------------------------------------------------------------
         // 3. TRANSMISSÃO PARA EQUIPE (TEAM)
@@ -577,25 +579,27 @@ const removeContact = async (req, res) => {
     }
 };
 
-// Busca o setor atual do piloto
-const getPilotSector = async (req, res) => {
+// Busca a órbita atual do piloto
+const getPilotOrbit = async (req, res) => {
     const { pilotUid } = req.params;
     let conn;
     try {
         conn = await db.getConnection();
-        const rows = await conn.query('SELECT sector FROM pilots WHERE pilot_uid = ?', [pilotUid]);
+        const rows = await conn.query('SELECT orbit FROM pilots WHERE pilot_uid = ?', [pilotUid]);
         const list = Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : rows;
         if (list.length > 0) {
-            return res.json({ status: 'sucesso', sectorUid: list[0].sector });
+            const orbitUid = list[0].orbit;
+            return res.json({ status: 'sucesso', orbitUid: orbitUid });
         }
         return res.status(404).json({ error: 'Piloto não encontrado' });
     } catch (error) {
-        console.error('Erro ao buscar setor do piloto:', error);
-        return res.status(500).json({ error: 'Erro interno ao buscar setor.' });
+        console.error('Erro ao buscar órbita do piloto:', error);
+        return res.status(500).json({ error: 'Erro interno ao buscar órbita.' });
     } finally {
         if (conn) conn.release();
     }
 };
+
 
 // Marca as mensagens como lidas (is_read = 1) para um piloto em um canal/subcanal
 const markMessagesAsRead = async (req, res) => {
@@ -728,7 +732,7 @@ module.exports = {
     getChannelMembers,
     getFactionMessages,
     sendChannelBroadcastMessage,
-    getPilotSector,
+    getPilotOrbit,
     addContact,
     removeContact,
     markMessagesAsRead,

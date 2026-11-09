@@ -20,7 +20,9 @@ const getPlayerProfile = async (req, res) => {
                 a.account AS operator_name,
                 a.avatar_url,
                 COALESCE(c.name, 'Freelancer') AS corporation_name,
-                s.name AS sector_name,
+                p.orbit,
+                p.station,
+                s.name AS orbit_name,
                 st.name AS station_name,
                 COALESCE(w.credits, 0) AS credits,
                 COALESCE(ps.kills, 0) AS kills,
@@ -35,8 +37,8 @@ const getPlayerProfile = async (req, res) => {
             LEFT JOIN pilots p ON p.pilot_uid = a.uid
             LEFT JOIN corporation_members cm ON cm.pilot_uid = p.pilot_uid
             LEFT JOIN corporations c ON c.corporation_uid = cm.corporation_uid
-            LEFT JOIN sectors s ON s.id = p.orbit
-            LEFT JOIN sector_stations st ON st.id = p.station
+            LEFT JOIN orbits s ON s.id = p.orbit
+            LEFT JOIN orbit_stations st ON st.id = p.station
             LEFT JOIN wallets w ON w.wallet_uid = a.uid
             LEFT JOIN pilot_stats ps ON ps.pilot_uid = a.uid
             WHERE a.uid = ?
@@ -49,9 +51,9 @@ const getPlayerProfile = async (req, res) => {
         }
 
         const playerData = playerRows[0];
-        const sectorStr = playerData.sector_name || 'DESCONHECIDO';
+        const orbitStr = playerData.orbit_name || 'DESCONHECIDA';
         const stationStr = playerData.station_name || 'DESCONHECIDO';
-        const locationFormatted = `KALI – ${sectorStr.toUpperCase()} – ${stationStr.toUpperCase()}`;
+        const locationFormatted = `KALI – ${orbitStr.toUpperCase()} – ${stationStr.toUpperCase()}`;
 
         const reputationRows = await conn.query(
             `SELECT f.name AS faction_name, COALESCE(pp.percentage, 0) AS percentage 
@@ -73,6 +75,10 @@ const getPlayerProfile = async (req, res) => {
                     account_id: Number(playerData.account_id),
                     name: playerData.operator_name,
                     corporation: playerData.corporation_name,
+                    orbit: Number(playerData.orbit || 1),
+                    station: Number(playerData.station || 1),
+                    orbit_name: orbitStr,
+                    station_name: stationStr,
                     location: locationFormatted,
                     credits: Number(playerData.credits),
                     avatar_url: playerData.avatar_url || null
