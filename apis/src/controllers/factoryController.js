@@ -147,6 +147,7 @@ const getAvailableRecipes = async (req, res) => {
                 i.image
              FROM craft_recipes cr
              INNER JOIN items i ON i.item_code = cr.item_code
+             WHERE i.active = 'SIM'
              ORDER BY i.item_type ASC, cr.cost ASC`
         );
         const allRecipes = Array.isArray(recipeRows) && Array.isArray(recipeRows[0]) ? recipeRows[0] : recipeRows;
@@ -160,7 +161,8 @@ const getAvailableRecipes = async (req, res) => {
                 i.name AS ingredient_name,
                 i.image AS ingredient_image
              FROM craft_recipe_resources crr
-             INNER JOIN items i ON i.item_code = crr.item_required`
+             INNER JOIN items i ON i.item_code = crr.item_required
+             WHERE i.active = 'SIM'`
         );
         const allResources = Array.isArray(resourceRows) && Array.isArray(resourceRows[0]) ? resourceRows[0] : resourceRows;
 
@@ -353,9 +355,12 @@ const startCrafting = async (req, res) => {
         const stationType = pilot.station_type;
         const playerCredits = Number(pilot.credits || 0);
 
-        // 2. Dados da receita
+        // 2. Dados da receita (apenas se o item estiver ativo)
         const recipeRows = await conn.query(
-            "SELECT item_code, time AS craft_time, cost, tier FROM craft_recipes WHERE item_code = ? LIMIT 1",
+            `SELECT cr.item_code, cr.time AS craft_time, cr.cost, cr.tier 
+             FROM craft_recipes cr
+             INNER JOIN items i ON i.item_code = cr.item_code
+             WHERE cr.item_code = ? AND i.active = 'SIM' LIMIT 1`,
             [item_code]
         );
         const recipeList = Array.isArray(recipeRows) && Array.isArray(recipeRows[0]) ? recipeRows[0] : recipeRows;

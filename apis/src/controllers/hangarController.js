@@ -455,7 +455,7 @@ const getPilotFleet = async (req, res) => {
              LEFT JOIN device_specs ds ON ds.item_code = i.item_code
              LEFT JOIN vessel_modules vm ON vm.module_uid = ds.target_module_uid
              LEFT JOIN utility_specs us ON us.item_code = i.item_code
-             WHERE i.item_type IN (2, 3, 4, 5)
+             WHERE i.item_type IN (2, 3, 4, 5) AND i.active = 'SIM'
              ORDER BY i.item_type ASC, i.item_code ASC`
         );
 
@@ -746,7 +746,7 @@ const equipVesselSlot = async (req, res) => {
             });
         }
 
-        const itemRows = await conn.query("SELECT item_code, name, item_type FROM items WHERE item_code = ? LIMIT 1", [item_code]);
+        const itemRows = await conn.query("SELECT item_code, name, item_type FROM items WHERE item_code = ? AND active = 'SIM' LIMIT 1", [item_code]);
         if (itemRows.length === 0) {
             await conn.rollback();
             return res.status(404).json({ status: "erro", mensagem: "Item n\u00e3o encontrado." });
@@ -1106,7 +1106,7 @@ const getPilotInventory = async (req, res) => {
              FROM container_slots cs
              INNER JOIN items i ON i.item_code = cs.item_code
              LEFT JOIN item_groups ig ON ig.group_code = i.group_code
-             WHERE cs.container_uid = ? AND cs.amount > 0 AND i.item_type IN (1, 2, 3, 4, 5)
+             WHERE cs.container_uid = ? AND cs.amount > 0 AND i.item_type IN (1, 2, 3, 4, 5) AND i.active = 'SIM'
              GROUP BY cs.item_code
              ORDER BY i.item_type ASC, i.item_code ASC`,
             [hangarContainerUid]
@@ -1196,7 +1196,7 @@ const getPilotInventory = async (req, res) => {
                  FROM container_slots cs
                  INNER JOIN items i ON i.item_code = cs.item_code
                  LEFT JOIN item_groups ig ON ig.group_code = i.group_code
-                 WHERE cs.container_uid = ? AND cs.amount > 0 AND i.item_type IN (1, 2, 3, 4, 5)
+                 WHERE cs.container_uid = ? AND cs.amount > 0 AND i.item_type IN (1, 2, 3, 4, 5) AND i.active = 'SIM'
                  GROUP BY cs.item_code
                  ORDER BY i.item_type ASC, i.item_code ASC`,
                 [vesselContainerUid]
@@ -1320,7 +1320,7 @@ const transferCargo = async (req, res) => {
         }
 
         const itemRows = await conn.query(
-            "SELECT item_code, name, item_type, GREATEST(1, COALESCE(volume, 1)) AS unit_volume FROM items WHERE item_code = ? LIMIT 1",
+            "SELECT item_code, name, item_type, GREATEST(1, COALESCE(volume, 1)) AS unit_volume FROM items WHERE item_code = ? AND active = 'SIM' LIMIT 1",
             [item_code]
         );
         if (itemRows.length === 0) {

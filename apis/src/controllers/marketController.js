@@ -231,7 +231,7 @@ const getMarketCatalog = async (req, res) => {
              LEFT JOIN vessel_modules vm ON vm.module_uid = ds.target_module_uid
              LEFT JOIN utility_specs us ON us.item_code = i.item_code
              LEFT JOIN vessel_specs vsp ON vsp.item_code = i.item_code
-             WHERE mi.market_uid = ? AND i.item_type IN (1, 2, 3, 4, 5, 6)
+             WHERE mi.market_uid = ? AND i.item_type IN (1, 2, 3, 4, 5, 6) AND i.active = 'SIM'
              ORDER BY i.item_type ASC, i.price ASC, i.item_code ASC, mi.owner_pilot_uid ASC`,
             [ctx.market_uid]
         );
@@ -346,7 +346,7 @@ const buyMarketItem = async (req, res) => {
             `SELECT mi.*, i.name AS item_name, i.volume, i.item_type
              FROM market_items mi
              INNER JOIN items i ON i.item_code = mi.item_code
-             WHERE mi.market_uid = ? AND mi.item_code = ? AND mi.owner_pilot_uid = ?
+             WHERE mi.market_uid = ? AND mi.item_code = ? AND mi.owner_pilot_uid = ? AND i.active = 'SIM'
              FOR UPDATE`,
             [ctx.market_uid, item_code, ownerUid]
         );
@@ -496,7 +496,7 @@ const sellMarketItem = async (req, res) => {
             `SELECT mi.selling_price, i.price AS catalog_price, i.name AS item_name, i.item_type
              FROM items i
              LEFT JOIN market_items mi ON mi.market_uid = ? AND mi.item_code = i.item_code AND mi.owner_pilot_uid = 0
-             WHERE i.item_code = ?
+             WHERE i.item_code = ? AND i.active = 'SIM'
              LIMIT 1`,
             [ctx.market_uid, item_code]
         );
@@ -656,7 +656,7 @@ const createPlayerListing = async (req, res) => {
             return res.status(404).json({ status: 'erro', mensagem: 'Piloto n\u00e3o encontrado.' });
         }
 
-        const itemRows = await conn.query("SELECT item_type, name FROM items WHERE item_code = ? LIMIT 1", [item_code]);
+        const itemRows = await conn.query("SELECT item_type, name FROM items WHERE item_code = ? AND active = 'SIM' LIMIT 1", [item_code]);
         if (itemRows.length === 0) {
             await conn.rollback();
             return res.status(404).json({ status: 'erro', mensagem: 'Item n\u00e3o encontrado.' });
@@ -783,9 +783,9 @@ const cancelPlayerListing = async (req, res) => {
         }
 
         const rows = await conn.query(
-            `SELECT mi.stock, i.item_type
+            `SELECT mi.stock, COALESCE(i.item_type, 1) AS item_type
              FROM market_items mi
-             INNER JOIN items i ON i.item_code = mi.item_code
+             LEFT JOIN items i ON i.item_code = mi.item_code
              WHERE mi.market_uid = ? AND mi.item_code = ? AND mi.owner_pilot_uid = ?
              FOR UPDATE`,
             [ctx.market_uid, item_code, ctx.pilot_uid]
