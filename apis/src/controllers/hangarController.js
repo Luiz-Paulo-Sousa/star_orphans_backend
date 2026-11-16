@@ -770,7 +770,7 @@ const getHangarInventory = async (req, res) => {
 
             let img = r.image_2d_url || r.image || null;
             if (img && !img.startsWith('http') && !img.startsWith('/')) {
-                img = `/uploads/${img}`;
+                img = `/items/${img}`;
             }
 
             return {
@@ -840,14 +840,14 @@ const getHangarInventory = async (req, res) => {
 
             let cargoUsedVol = 0;
             const cargoItems = cargoSlotRows.map(cr => {
-                const amt = Number(cr.amount);
+                const amount = Number(cr.amount);
                 const uVol = Number(cr.volume || 1);
-                const tVol = amt * uVol;
+                const tVol = amount * uVol;
                 cargoUsedVol += tVol;
 
                 let cImg = cr.image_2d_url || cr.image || null;
                 if (cImg && !cImg.startsWith('http') && !cImg.startsWith('/')) {
-                    cImg = `/uploads/${cImg}`;
+                    cImg = `/items/${cImg}`;
                 }
 
                 return {
