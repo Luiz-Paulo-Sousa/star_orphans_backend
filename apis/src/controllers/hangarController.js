@@ -8,98 +8,131 @@ const formatItemCode = (code) => {
     return str;
 };
 
-const buildEffectLabel = (row) => {
-    const t = Number(row.item_type);
-    if (t === 4 && row.device_effect_value != null) {
-        const val = Number(row.device_effect_value);
-        if (row.device_effect_type === 'percent') return `+${val}% ${row.target_module_name || ''}`.trim();
-        return `+${val} MW (${row.target_module_name || ''})`.trim();
-    }
-    if (t === 5 && row.utility_effect_value != null) {
-        const val = Number(row.utility_effect_value);
-        const g = String(row.group_name || '').toUpperCase();
-        if (g === 'NANOBOTS') return `+${val} HP Casco`;
-        if (g === 'BATTERY') return `+${val} MW Energia`;
-        if (g === 'BOOST') return `+${val}% Velocidade`;
-        if (g === 'MINE') return `${val} Dano Explosivo`;
-        if (g === 'EMP' || g === 'ECM' || g === 'FLARE' || g === 'CHAFF') return `${val}s Dura\u00e7\u00e3o`;
-        return `${val}`;
-    }
-    return null;
-};
+const buildVesselHardpointsAndStats = (vesselUid, itemCode, cargoCapacity, vsp, eqList = []) => {
+    const energyHp = Number(vsp?.energy_hardpoints || 0);
+    const balisticHp = Number(vsp?.balistic_hardpoints || 0);
+    const totalWeapons = Math.max(1, energyHp + balisticHp);
+    const totalMissiles = Number(vsp?.missile_hardpoints || 0);
+    const totalDevices = Number(vsp?.devices || 0);
+    const totalUtilities = Number(vsp?.utilities || 0);
+    const maxEnergy = Number(vsp?.max_energy || 650);
 
-const mapItemSpecs = (r) => {
-    const mw = r.weapon_mw ?? r.device_mw ?? r.utility_mw ?? 0;
-    const range = r.fire_range != null
-        ? Number(r.fire_range)
-        : (r.utility_effect_range != null && Number(r.utility_effect_range) > 0 ? Number(r.utility_effect_range) : 0);
+    const eqBySlot = new Map();
+    for (const eq of eqList) {
+        eqBySlot.set(Number(eq.slot), eq);
+    }
+
+    let totalDps = 0;
+    let totalEnergyUsed = 0;
+
+    const buildCategorySlots = (category, baseSlot, count, idPrefix) => {
+        let maxSlot = baseSlot + count - 1;
+        for (const [s] of eqBySlot.entries()) {
+            if (s >= baseSlot && s < baseSlot + 100) {
+                if (s > maxSlot) maxSlot = s;
+            }
+        }
+        if (count === 0 && maxSlot < baseSlot) {
+            return [];
+        }
+
+        const slots = [];
+        for (let s = baseSlot; s <= maxSlot; s++) {
+            const eq = eqBySlot.get(s);
+            if (eq) {
+                let slotDps = 0;
+                let slotEnergy = 0;
+                let slotRange = 0;
+                let targetMod = null;
+                let effVal = null;
+                let uType = null;
+                let cooldown = null;
+
+                if (category === 'CANHÕES' || category === 'MÍSSEIS') {
+                    slotDps = Math.round(Number(eq.damage_per_second || 0));
+                    slotEnergy = Math.round(Number(eq.weapon_energy || 0));
+                    slotRange = Math.round(Number(eq.fire_range || 0));
+                    totalDps += slotDps;
+                    totalEnergyUsed += slotEnergy;
+                } else if (category === 'DISPOSITIVOS') {
+                    slotEnergy = Math.round(Number(eq.device_energy || 0));
+                    targetMod = eq.target_module_name || 'Sistema';
+                    effVal = eq.device_effect_type === 'percent'
+                        ? `+${eq.device_effect_value}%`
+                        : `+${eq.device_effect_value} MW`;
+                    totalEnergyUsed += slotEnergy;
+                } else if (category === 'UTILITÁRIOS') {
+                    slotEnergy = Math.round(Number(eq.utility_energy || 0));
+                    uType = eq.usage_type === 'rechargeable' ? 'Recarregável' : 'Consumível';
+                    cooldown = `${eq.cooldown_seconds || 0}s`;
+                    effVal = `+${eq.utility_effect_value || 0}`;
+                    totalEnergyUsed += slotEnergy;
+                }
+
+                slots.push({
+                    id: `${idPrefix}_${vesselUid}_${s}`,
+                    db_slot: s,
+                    name: eq.name,
+                    free: false,
+                    image_url: eq.image_url || null,
+                    dps: slotDps,
+                    energy: slotEnergy,
+                    range: slotRange,
+                    target_module: targetMod,
+                    effect_value: effVal,
+                    usage_type: uType,
+                    cooldown: cooldown,
+                    qty: (category === 'MÍSSEIS' || category === 'UTILITÁRIOS') ? Number(eq.amount || 1) : null,
+                    item_code: Number(eq.item_code)
+                });
+            } else {
+                slots.push({
+                    id: `${idPrefix}_${vesselUid}_${s}`,
+                    db_slot: s,
+                    name: 'SLOT VAZIO',
+                    free: true,
+                    image_url: null,
+                    dps: 0,
+                    energy: 0,
+                    range: 0,
+                    target_module: null,
+                    effect_value: null,
+                    usage_type: null,
+                    cooldown: null,
+                    qty: null,
+                    item_code: null
+                });
+            }
+        }
+        return slots;
+    };
+
+    const hardpoints = {
+        'CANHÕES': buildCategorySlots('CANHÕES', 0, totalWeapons, 'hp'),
+        'MÍSSEIS': buildCategorySlots('MÍSSEIS', 100, totalMissiles, 'ms'),
+        'DISPOSITIVOS': buildCategorySlots('DISPOSITIVOS', 200, totalDevices, 'dev'),
+        'UTILITÁRIOS': buildCategorySlots('UTILITÁRIOS', 300, totalUtilities, 'ut')
+    };
+
+    const mass = Number(((cargoCapacity || 1000) / 50.0).toFixed(1));
+
     return {
-        dps: r.damage_per_second != null ? Number(r.damage_per_second) : 0,
-        energy: Number(mw || 0),
-        range: Number(range || 0),
-        fire_rate: r.fire_rate != null ? Number(r.fire_rate) : null,
-        auto_fire: r.auto_fire != null ? (r.auto_fire === 'y' ? 'SIM' : 'N\u00c3O') : null,
-        target_module: r.target_module_name || null,
-        effect_label: buildEffectLabel(r),
-        effect_value: Number(r.device_effect_value ?? r.utility_effect_value ?? 0),
-        usage_type: r.usage_type ? (r.usage_type === 'rechargeable' ? 'RECARREG\u00c1VEL' : 'CONSUM\u00cdVEL') : null,
-        cooldown_seconds: r.cooldown_seconds != null && Number(r.cooldown_seconds) > 0 ? Number(r.cooldown_seconds) : null
+        hardpoints,
+        stats: {
+            dps: totalDps,
+            energyUsed: totalEnergyUsed,
+            energyMax: maxEnergy,
+            mass: mass
+        }
     };
 };
-
-async function ensureStationContainersAndMarket(conn, pilotUid, orbitId, stationId) {
-    await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (0, 0, 999999999)");
-    await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000)", [pilotUid]);
-
-    const sId = Number(stationId) || 1;
-    const oId = Number(orbitId) || 1;
-
-    let mktRows = await conn.query(
-        "SELECT market_uid FROM markets WHERE orbit = ? AND station = ? LIMIT 1",
-        [oId, sId]
-    );
-    let marketUid = sId;
-    if (mktRows.length === 0) {
-        const fallback = await conn.query(
-            "SELECT market_uid FROM markets WHERE station = ? LIMIT 1",
-            [sId]
-        );
-        if (fallback.length > 0) {
-            marketUid = Number(fallback[0].market_uid);
-        } else {
-            await conn.query(
-                "INSERT INTO markets (market_uid, orbit, station) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE orbit = VALUES(orbit), station = VALUES(station)",
-                [sId, oId, sId]
-            );
-        }
-    } else {
-        marketUid = Number(mktRows[0].market_uid);
-    }
-
-    let contRows = await conn.query(
-        "SELECT container_uid FROM containers WHERE owner = ? AND storage = ? AND type = 'hangar' LIMIT 1",
-        [pilotUid, sId]
-    );
-    let hangarContainerUid;
-    if (contRows.length === 0) {
-        const res = await conn.query(
-            "INSERT INTO containers (owner, storage, type, max_volume, current_volume, protected) VALUES (?, ?, 'hangar', 50000, 0, 'y')",
-            [pilotUid, sId]
-        );
-        hangarContainerUid = Number(res.insertId);
-    } else {
-        hangarContainerUid = Number(contRows[0].container_uid);
-    }
-
-    return { marketUid, hangarContainerUid };
-}
 
 const getPilotFleet = async (req, res) => {
     const pilotUid = req.params.pilotUid || req.query.pilot_uid;
     if (!pilotUid) {
         return res.status(400).json({
             status: "erro",
-            mensagem: "Par\u00e2metro pilot_uid \u00e9 obrigat\u00f3rio."
+            mensagem: "Parâmetro pilot_uid é obrigatório."
         });
     }
 
@@ -107,6 +140,7 @@ const getPilotFleet = async (req, res) => {
     try {
         conn = await db.getConnection();
 
+        // 1. Obtém a localização atual do piloto (orbit e station) e saldo de créditos
         const pilotRows = await conn.query(
             `SELECT 
                 p.pilot_uid,
@@ -127,12 +161,11 @@ const getPilotFleet = async (req, res) => {
         );
 
         const pilot = pilotRows.length > 0 ? pilotRows[0] : null;
-        const pilotOrbit = pilot ? Number(pilot.orbit) : 2;
-        const pilotStation = pilot ? Number(pilot.station) : 1;
+        const pilotOrbit = pilot ? Number(pilot.orbit) : null;
+        const pilotStation = pilot ? Number(pilot.station) : null;
         const pilotCredits = pilot ? Number(pilot.credits || 0) : 0;
 
-        const { marketUid, hangarContainerUid } = await ensureStationContainersAndMarket(conn, pilotUid, pilotOrbit, pilotStation);
-
+        // 2. Obtém todas as naves do piloto na tabela vessels + items + item_images
         const vesselRows = await conn.query(
             `SELECT 
                 v.vessel_uid,
@@ -152,76 +185,220 @@ const getPilotFleet = async (req, res) => {
                 ii.image_2d_url,
                 ii.image_3d_url,
                 s.name AS orbit_name,
-                st.name AS station_name,
-                vsp.energy_hardpoints,
-                vsp.balistic_hardpoints,
-                vsp.missile_hardpoints,
-                vsp.devices AS spec_devices,
-                vsp.utilities AS spec_utilities,
-                vsp.max_energy AS spec_max_energy,
-                vsp.armor AS spec_armor,
-                vsp.max_speed AS spec_max_speed
+                st.name AS station_name
             FROM vessels v
             LEFT JOIN items i ON i.item_code = v.item_code
             LEFT JOIN item_images ii ON ii.item_code = v.item_code
             LEFT JOIN orbits s ON s.id = v.orbit
             LEFT JOIN orbit_stations st ON st.id = v.station
-            LEFT JOIN vessel_specs vsp ON vsp.item_code = v.item_code
             WHERE v.pilot_uid = ?
             ORDER BY (v.selected = 'y') DESC, v.vessel_uid ASC`,
             [pilotUid]
         );
 
-        // Busca todos os equipamentos instalados nas naves deste piloto
-        const equipRows = await conn.query(
+        const vesselUids = vesselRows.map(r => Number(r.vessel_uid));
+        const vesselItemCodes = [...new Set(vesselRows.map(r => Number(r.item_code)))];
+
+        // 3. Obtém especificações de naves em lote
+        let specsRows = [];
+        if (vesselItemCodes.length > 0) {
+            specsRows = await conn.query(
+                "SELECT * FROM vessel_specs WHERE item_code IN (?)",
+                [vesselItemCodes]
+            );
+        }
+        const specsMap = new Map();
+        for (const s of specsRows) {
+            specsMap.set(Number(s.item_code), s);
+        }
+
+        // 4. Obtém todos os equipamentos instalados nas naves do piloto
+        let equipRows = [];
+        if (vesselUids.length > 0) {
+            equipRows = await conn.query(
+                `SELECT 
+                    ve.vessel_uid,
+                    ve.slot,
+                    ve.item_code,
+                    ve.type,
+                    ve.amount,
+                    i.name,
+                    i.item_type,
+                    COALESCE(ii.image_2d_url, i.image) AS image_url,
+                    ws.damage_per_second,
+                    ws.energy_consumption AS weapon_energy,
+                    ws.fire_range,
+                    ds.energy_consumption AS device_energy,
+                    ds.effect_value AS device_effect_value,
+                    ds.effect_type AS device_effect_type,
+                    vm.name AS target_module_name,
+                    us.usage_type,
+                    us.energy_consumption AS utility_energy,
+                    us.cooldown_seconds,
+                    us.effect_value AS utility_effect_value
+                FROM vessel_equipments ve
+                INNER JOIN items i ON i.item_code = ve.item_code
+                LEFT JOIN item_images ii ON ii.item_code = ve.item_code
+                LEFT JOIN weapon_specs ws ON ws.item_code = ve.item_code
+                LEFT JOIN device_specs ds ON ds.item_code = ve.item_code
+                LEFT JOIN vessel_modules vm ON vm.module_uid = ds.target_module_uid
+                LEFT JOIN utility_specs us ON us.item_code = ve.item_code
+                WHERE ve.vessel_uid IN (?)
+                ORDER BY ve.vessel_uid ASC, ve.slot ASC`,
+                [vesselUids]
+            );
+        }
+        const equipByVessel = new Map();
+        for (const eq of equipRows) {
+            const vId = Number(eq.vessel_uid);
+            if (!equipByVessel.has(vId)) equipByVessel.set(vId, []);
+            equipByVessel.get(vId).push(eq);
+        }
+
+        // 5. Estoque do piloto no depósito da estação atual
+        const playerStockMap = {};
+        if (pilotStation) {
+            const contRows = await conn.query(
+                "SELECT container_uid FROM containers WHERE owner = ? AND storage = ? AND type = 'hangar' LIMIT 1",
+                [pilotUid, pilotStation]
+            );
+            if (contRows.length > 0) {
+                const hContUid = Number(contRows[0].container_uid);
+                const slotRows = await conn.query(
+                    "SELECT item_code, SUM(amount) AS total_amount FROM container_slots WHERE container_uid = ? GROUP BY item_code",
+                    [hContUid]
+                );
+                for (const sr of slotRows) {
+                    playerStockMap[Number(sr.item_code)] = Number(sr.total_amount);
+                }
+            }
+        }
+
+        // 6. Catálogo de itens disponíveis para equipamentos (Armas, Mísseis, Dispositivos, Utilitários)
+        const marketStationId = pilotStation || 1;
+        const catalogItems = await conn.query(
             `SELECT 
-                ve.vessel_uid,
-                ve.slot,
-                ve.item_code,
-                ve.type,
-                ve.amount,
-                i.name AS item_name,
+                i.item_code,
                 i.item_type,
                 i.group_code,
-                i.image,
+                i.name,
+                i.price AS catalog_price,
+                i.volume,
+                COALESCE(ii.image_2d_url, i.image) AS image_url,
+                it.type AS type_name,
                 ig.name AS group_name,
                 ws.damage_per_second,
-                ws.energy_consumption AS weapon_mw,
+                ws.energy_consumption AS weapon_energy,
                 ws.fire_range,
                 ws.fire_rate,
                 ws.auto_fire,
                 ds.target_module_uid,
                 vm.name AS target_module_name,
-                ds.energy_consumption AS device_mw,
+                ds.energy_consumption AS device_energy,
                 ds.effect_value AS device_effect_value,
                 ds.effect_type AS device_effect_type,
                 us.usage_type,
-                us.energy_consumption AS utility_mw,
+                us.energy_consumption AS utility_energy,
                 us.cooldown_seconds,
                 us.effect_value AS utility_effect_value,
-                us.effect_range AS utility_effect_range
-            FROM vessel_equipments ve
-            INNER JOIN vessels v ON v.vessel_uid = ve.vessel_uid
-            INNER JOIN items i ON i.item_code = ve.item_code
+                us.effect_range AS utility_effect_range,
+                COALESCE(sw.stock_balance, mi.stock, 10) AS market_stock,
+                COALESCE(mi.selling_price, i.price, 10000) AS buy_price
+            FROM items i
+            LEFT JOIN item_images ii ON ii.item_code = i.item_code
+            LEFT JOIN item_types it ON it.type_code = i.item_type
             LEFT JOIN item_groups ig ON ig.group_code = i.group_code
             LEFT JOIN weapon_specs ws ON ws.item_code = i.item_code
             LEFT JOIN device_specs ds ON ds.item_code = i.item_code
             LEFT JOIN vessel_modules vm ON vm.module_uid = ds.target_module_uid
             LEFT JOIN utility_specs us ON us.item_code = i.item_code
-            WHERE v.pilot_uid = ?
-            ORDER BY ve.vessel_uid ASC, ve.slot ASC`,
-            [pilotUid]
+            LEFT JOIN market_items mi ON mi.market_uid = ? AND mi.item_code = i.item_code AND mi.owner_pilot_uid = 0
+            LEFT JOIN station_warehouse sw ON sw.station_id = ? AND sw.item_code = i.item_code AND sw.pilot_uid = 0 AND sw.status = 'ativo'
+            WHERE i.item_type IN (2, 3, 4, 5) AND (i.active = 'SIM' OR i.active IS NULL)
+            ORDER BY i.item_type ASC, i.name ASC`,
+            [marketStationId, marketStationId]
         );
 
-        const equipByVessel = {};
-        for (const er of equipRows) {
-            const vUid = Number(er.vessel_uid);
-            if (!equipByVessel[vUid]) equipByVessel[vUid] = {};
-            equipByVessel[vUid][Number(er.slot)] = er;
+        const catalog = {
+            'CANHÕES': [],
+            'MÍSSEIS': [],
+            'DISPOSITIVOS': [],
+            'UTILITÁRIOS': []
+        };
+
+        for (const row of catalogItems) {
+            const itCode = Number(row.item_code);
+            const pStock = playerStockMap[itCode] || 0;
+            const mStock = Number(row.market_stock || 10);
+            const bPrice = Number(row.buy_price || row.catalog_price || 10000);
+            const imgUrl = row.image_url || null;
+            const iType = Number(row.item_type);
+
+            if (row.item_type === 2) {
+                catalog['CANHÕES'].push({
+                    item_code: itCode,
+                    item_type: iType,
+                    name: row.name,
+                    image_url: imgUrl,
+                    dps: Math.round(Number(row.damage_per_second || 0)),
+                    energy: Math.round(Number(row.weapon_energy || 0)),
+                    range: Math.round(Number(row.fire_range || 0)),
+                    stock: pStock,
+                    inStock: pStock > 0,
+                    market_stock: mStock,
+                    buy_price: bPrice
+                });
+            } else if (row.item_type === 3) {
+                catalog['MÍSSEIS'].push({
+                    item_code: itCode,
+                    item_type: iType,
+                    name: row.name,
+                    image_url: imgUrl,
+                    dps: Math.round(Number(row.damage_per_second || 0)),
+                    energy: Math.round(Number(row.weapon_energy || 0)),
+                    range: Math.round(Number(row.fire_range || 0)),
+                    stock: pStock,
+                    inStock: pStock > 0,
+                    market_stock: mStock,
+                    buy_price: bPrice
+                });
+            } else if (row.item_type === 4) {
+                const effStr = row.device_effect_type === 'percent'
+                    ? `+${row.device_effect_value}%`
+                    : `+${row.device_effect_value} MW`;
+                catalog['DISPOSITIVOS'].push({
+                    item_code: itCode,
+                    item_type: iType,
+                    name: row.name,
+                    image_url: imgUrl,
+                    energy: Math.round(Number(row.device_energy || 0)),
+                    target_module: row.target_module_name || 'Sistema',
+                    effect_value: effStr,
+                    stock: pStock,
+                    inStock: pStock > 0,
+                    market_stock: mStock,
+                    buy_price: bPrice
+                });
+            } else if (row.item_type === 5) {
+                const uType = row.usage_type === 'rechargeable' ? 'Recarregável' : 'Consumível';
+                catalog['UTILITÁRIOS'].push({
+                    item_code: itCode,
+                    item_type: iType,
+                    name: row.name,
+                    image_url: imgUrl,
+                    energy: Math.round(Number(row.utility_energy || 0)),
+                    usage_type: uType,
+                    cooldown: `${row.cooldown_seconds || 0}s`,
+                    effect_value: `+${row.utility_effect_value || 0}`,
+                    stock: pStock,
+                    inStock: pStock > 0,
+                    market_stock: mStock,
+                    buy_price: bPrice
+                });
+            }
         }
 
         const vessels = vesselRows.map(row => {
-            const vUid = Number(row.vessel_uid);
             const vOrbit = Number(row.orbit);
             const vStation = Number(row.station);
             const isAtCurrentStation =
@@ -262,7 +439,7 @@ const getPilotFleet = async (req, res) => {
 
             const getSubStatus = (val) => {
                 if (val > 100) return 'SOBRECARGA';
-                if (val < 80) return 'ATEN\u00c7\u00c3O';
+                if (val < 80) return 'ATENÇÃO';
                 return 'NOMINAL';
             };
 
@@ -271,82 +448,34 @@ const getPilotFleet = async (req, res) => {
                 return Math.round(basePrice * (subDmg / 500.0));
             };
 
-            const orbitLabel = row.orbit_name ? String(row.orbit_name).toUpperCase() : `\u00d3RBITA ${vOrbit}`;
-            const stationLabel = row.station_name ? String(row.station_name).toUpperCase() : `ESTA\u00c7\u00c3O ${vStation}`;
+            const sectorLabel = row.orbit_name ? String(row.orbit_name).toUpperCase() : `ÓRBITA ${vOrbit}`;
+            const stationLabel = row.station_name ? String(row.station_name).toUpperCase() : `ESTAÇÃO ${vStation}`;
 
-            // Monta os slots de Hardpoints desta nave com base em vessel_specs + vessel_equipments
-            const weaponsCount = Math.max(1, (Number(row.energy_hardpoints || 0) + Number(row.balistic_hardpoints || 0)) || 3);
-            const missilesCount = Math.max(1, Number(row.missile_hardpoints ?? 2));
-            const devicesCount = Math.max(1, Number(row.spec_devices ?? 2));
-            const utilitiesCount = Math.max(1, Number(row.spec_utilities ?? 3));
-            const vEquips = equipByVessel[vUid] || {};
-
-            let totalDps = 0;
-            let totalEnergyUsed = 0;
-            let bonusEnergyMax = 0;
-
-            const buildSlotList = (count, baseOffset, prefix, categoryLabel) => {
-                const list = [];
-                for (let i = 0; i < count; i++) {
-                    const dbSlot = baseOffset + i;
-                    const eq = vEquips[dbSlot];
-                    if (eq) {
-                        const sp = mapItemSpecs(eq);
-                        totalDps += sp.dps;
-                        totalEnergyUsed += sp.energy;
-                        if (Number(eq.item_type) === 4 && eq.device_effect_type === 'flat' && Number(eq.target_module_uid) === 4) {
-                            bonusEnergyMax += Number(eq.device_effect_value || 0);
-                        }
-                        list.push({
-                            id: `${prefix}:${i}`,
-                            db_slot: dbSlot,
-                            category: categoryLabel,
-                            free: false,
-                            item_code: Number(eq.item_code),
-                            name: eq.item_name,
-                            group_name: eq.group_name || '',
-                            image_url: eq.image || null,
-                            qty: (baseOffset === 100 || baseOffset === 300) ? Number(eq.amount || 1) : null,
-                            ...sp
-                        });
-                    } else {
-                        list.push({
-                            id: `${prefix}:${i}`,
-                            db_slot: dbSlot,
-                            category: categoryLabel,
-                            free: true,
-                            name: '+ SLOT LIVRE',
-                            dps: 0,
-                            energy: 0,
-                            range: 0
-                        });
-                    }
-                }
-                return list;
-            };
-
-            const hardpoints = {
-                'CANH\u00d5ES': buildSlotList(weaponsCount, 0, 'can', 'CANH\u00d5ES'),
-                'M\u00cdSSEIS': buildSlotList(missilesCount, 100, 'mis', 'M\u00cdSSEIS'),
-                'DISPOSITIVOS': buildSlotList(devicesCount, 200, 'dev', 'DISPOSITIVOS'),
-                'UTILIT\u00c1RIOS': buildSlotList(utilitiesCount, 300, 'uti', 'UTILIT\u00c1RIOS')
-            };
-
-            const baseMaxEnergy = Number(row.spec_max_energy || 650);
+            const vUid = Number(row.vessel_uid);
+            const vItemCode = Number(row.item_code);
+            const vsp = specsMap.get(vItemCode) || null;
+            const vesselEquips = equipByVessel.get(vUid) || [];
+            const { hardpoints, stats } = buildVesselHardpointsAndStats(
+                vUid,
+                vItemCode,
+                Number(row.cargo_capacity),
+                vsp,
+                vesselEquips
+            );
 
             return {
                 vessel_uid: vUid,
                 pilot_uid: Number(row.pilot_uid),
-                item_code: Number(row.item_code),
+                item_code: vItemCode,
                 item_code_formatted: formatItemCode(row.item_code),
                 name: String(row.vessel_name).toUpperCase(),
-                registry: `Registro #${vUid} \u00b7 item ${formatItemCode(row.item_code)}`,
+                registry: `Registro #${row.vessel_uid} · item ${formatItemCode(row.item_code)}`,
                 selected: isSelected,
-                status: isSelected ? 'ATIVA' : (isAtCurrentStation ? 'ATRACADA' : 'EM OUTRA ESTA\u00c7\u00c3O'),
+                status: isSelected ? 'ATIVA' : (isAtCurrentStation ? 'ATRACADA' : 'EM OUTRA ESTAÇÃO'),
                 is_at_current_station: isAtCurrentStation,
                 orbit: vOrbit,
                 station: vStation,
-                location_label: `${orbitLabel} - ${stationLabel}`,
+                location_label: `${sectorLabel} – ${stationLabel}`,
                 cargo_capacity: Number(row.cargo_capacity),
                 base_price: basePrice,
                 damage_percent: damagePercent,
@@ -356,12 +485,7 @@ const getPilotFleet = async (req, res) => {
                 hologram_url: hologramUrl,
                 image_3d_url: row.image_3d_url || null,
                 hardpoints,
-                stats: {
-                    dps: totalDps,
-                    energyUsed: totalEnergyUsed,
-                    energyMax: baseMaxEnergy + bonusEnergyMax,
-                    mass: Number(row.cargo_capacity || 1000)
-                },
+                stats,
                 subsystems: [
                     { key: 'integrity', name: 'Integridade do Casco', val: integrity, status: getSubStatus(integrity), repair_cost: calcSubRepairCost(integrity) },
                     { key: 'engine', name: 'Motores de Empuxo', val: engine, status: getSubStatus(engine), repair_cost: calcSubRepairCost(engine) },
@@ -372,149 +496,17 @@ const getPilotFleet = async (req, res) => {
             };
         });
 
-        // 3. Monta o CATALOGO DE ITENS consolidado para o Loadout:
-        //    - Estoque no deposito da estacao (type='hangar')
-        //    - Estoque na carga da nave (type='vessel_cargo')
-        //    - Estoque no mercado da estacao (somando anuncios de jogadores + estacao, priorizando anuncios de jogadores mais antigos primeiro!)
-        const hangarSlots = await conn.query(
-            "SELECT item_code, SUM(amount) AS total_amt FROM container_slots WHERE container_uid = ? GROUP BY item_code",
-            [hangarContainerUid]
-        );
-        const hangarStockMap = {};
-        for (const r of hangarSlots) {
-            hangarStockMap[Number(r.item_code)] = Number(r.total_amt || 0);
-        }
-
-        const cargoSlots = await conn.query(
-            `SELECT cs.item_code, SUM(cs.amount) AS total_amt
-             FROM container_slots cs
-             INNER JOIN containers c ON c.container_uid = cs.container_uid
-             WHERE c.owner = ? AND c.type = 'vessel_cargo'
-             GROUP BY cs.item_code`,
-            [pilotUid]
-        );
-        const cargoStockMap = {};
-        for (const r of cargoSlots) {
-            cargoStockMap[Number(r.item_code)] = Number(r.total_amt || 0);
-        }
-
-        // Busca ofertas do mercado da estacao ordenadas por prioridade:
-        // 1o: Anuncios de outros jogadores (owner_pilot_uid > 0 e != pilotUid), do mais antigo (last_update ASC) para o mais recente
-        // 2o: Estoque da Estacao (owner_pilot_uid = 0)
-        const mktRows = await conn.query(
-            `SELECT item_code, owner_pilot_uid, selling_price, stock, last_update
-             FROM market_items
-             WHERE market_uid = ? AND stock > 0 AND owner_pilot_uid != ?
-             ORDER BY (owner_pilot_uid > 0) DESC, last_update ASC, owner_pilot_uid ASC`,
-            [marketUid, pilotUid]
-        );
-
-        const marketSummaryMap = {};
-        for (const mr of mktRows) {
-            const code = Number(mr.item_code);
-            const st = Number(mr.stock || 0);
-            if (st <= 0) continue;
-            if (!marketSummaryMap[code]) {
-                marketSummaryMap[code] = {
-                    total_market_stock: 0,
-                    next_buy_price: Math.round(Number(mr.selling_price || 100)),
-                    next_owner_pilot_uid: Number(mr.owner_pilot_uid || 0),
-                    has_pilot_ads: Number(mr.owner_pilot_uid || 0) > 0
-                };
-            }
-            marketSummaryMap[code].total_market_stock += st;
-        }
-
-        const allEquipCatalogRows = await conn.query(
-            `SELECT 
-                i.item_code,
-                i.item_type,
-                i.group_code,
-                i.name AS item_name,
-                i.price AS catalog_price,
-                i.image,
-                ig.name AS group_name,
-                ws.damage_per_second,
-                ws.energy_consumption AS weapon_mw,
-                ws.fire_range,
-                ws.fire_rate,
-                ws.auto_fire,
-                ds.target_module_uid,
-                vm.name AS target_module_name,
-                ds.energy_consumption AS device_mw,
-                ds.effect_value AS device_effect_value,
-                ds.effect_type AS device_effect_type,
-                us.usage_type,
-                us.energy_consumption AS utility_mw,
-                us.cooldown_seconds,
-                us.effect_value AS utility_effect_value,
-                us.effect_range AS utility_effect_range
-             FROM items i
-             LEFT JOIN item_groups ig ON ig.group_code = i.group_code
-             LEFT JOIN weapon_specs ws ON ws.item_code = i.item_code
-             LEFT JOIN device_specs ds ON ds.item_code = i.item_code
-             LEFT JOIN vessel_modules vm ON vm.module_uid = ds.target_module_uid
-             LEFT JOIN utility_specs us ON us.item_code = i.item_code
-             WHERE i.item_type IN (2, 3, 4, 5) AND i.active = 'SIM'
-             ORDER BY i.item_type ASC, i.item_code ASC`
-        );
-
-        const catalog = {
-            'CANH\u00d5ES': [],
-            'M\u00cdSSEIS': [],
-            'DISPOSITIVOS': [],
-            'UTILIT\u00c1RIOS': []
-        };
-
-        for (const r of allEquipCatalogRows) {
-            const code = Number(r.item_code);
-            const hStock = Number(hangarStockMap[code] || 0);
-            const cStock = Number(cargoStockMap[code] || 0);
-            const ownedStock = hStock + cStock;
-            const mktInfo = marketSummaryMap[code];
-            const marketStock = mktInfo ? mktInfo.total_market_stock : 0;
-
-            // Regra solicitada: Nao trazer itens que nao estejam disponiveis no estoque do jogador, nem na carga da nave e nem no estoque da estacao/mercado!
-            if (ownedStock <= 0 && marketStock <= 0) {
-                continue;
-            }
-
-            const sp = mapItemSpecs(r);
-            const iType = Number(r.item_type);
-            let catKey = 'CANH\u00d5ES';
-            if (iType === 3) catKey = 'M\u00cdSSEIS';
-            else if (iType === 4) catKey = 'DISPOSITIVOS';
-            else if (iType === 5) catKey = 'UTILIT\u00c1RIOS';
-
-            catalog[catKey].push({
-                item_code: code,
-                item_code_formatted: formatItemCode(code),
-                name: r.item_name,
-                item_type: iType,
-                group_name: r.group_name || '',
-                image_url: r.image || null,
-                stock: ownedStock,
-                hangar_stock: hStock,
-                cargo_stock: cStock,
-                inStock: ownedStock > 0,
-                market_stock: marketStock,
-                buy_price: mktInfo ? mktInfo.next_buy_price : Math.round(Number(r.catalog_price || 1000)),
-                next_seller_is_pilot: mktInfo ? mktInfo.has_pilot_ads : false,
-                ...sp
-            });
-        }
-
         return res.json({
             status: "sucesso",
             data: {
                 pilot: pilot ? {
                     pilot_uid: Number(pilot.pilot_uid),
                     name: pilot.pilot_name,
+                    credits: pilotCredits,
                     orbit: pilotOrbit,
                     station: pilotStation,
-                    credits: pilotCredits,
                     docked: String(pilot.docked || 'y').toLowerCase() === 'y',
-                    location_label: `${(pilot.orbit_name || `\u00d3RBITA ${pilotOrbit}`).toUpperCase()} - ${(pilot.station_name || `ESTA\u00c7\u00c3O ${pilotStation}`).toUpperCase()}`
+                    location_label: `${(pilot.orbit_name || `ÓRBITA ${pilotOrbit}`).toUpperCase()} – ${(pilot.station_name || `ESTAÇÃO ${pilotStation}`).toUpperCase()}`
                 } : null,
                 vessels,
                 catalog
@@ -533,7 +525,7 @@ const selectActiveVessel = async (req, res) => {
     if (!pilot_uid || !vessel_uid) {
         return res.status(400).json({
             status: "erro",
-            mensagem: "pilot_uid e vessel_uid s\u00e3o obrigat\u00f3rios."
+            mensagem: "pilot_uid e vessel_uid são obrigatórios."
         });
     }
 
@@ -546,7 +538,7 @@ const selectActiveVessel = async (req, res) => {
             [pilot_uid]
         );
         if (pilotRows.length === 0) {
-            return res.status(404).json({ status: "erro", mensagem: "Piloto n\u00e3o encontrado." });
+            return res.status(404).json({ status: "erro", mensagem: "Piloto não encontrado." });
         }
 
         const vesselRows = await conn.query(
@@ -554,7 +546,7 @@ const selectActiveVessel = async (req, res) => {
             [vessel_uid, pilot_uid]
         );
         if (vesselRows.length === 0) {
-            return res.status(404).json({ status: "erro", mensagem: "Nave n\u00e3o encontrada para este piloto." });
+            return res.status(404).json({ status: "erro", mensagem: "Nave não encontrada para este piloto." });
         }
 
         const pilot = pilotRows[0];
@@ -563,7 +555,7 @@ const selectActiveVessel = async (req, res) => {
         if (Number(pilot.orbit) !== Number(vessel.orbit) || Number(pilot.station) !== Number(vessel.station)) {
             return res.status(400).json({
                 status: "erro",
-                mensagem: "Voc\u00ea precisa estar na mesma esta\u00e7\u00e3o onde esta nave est\u00e1 atracada para ativ\u00e1-la."
+                mensagem: "Você precisa estar na mesma estação onde esta nave está atracada para ativá-la."
             });
         }
 
@@ -588,7 +580,7 @@ const repairVessel = async (req, res) => {
     if (!pilot_uid || !vessel_uid) {
         return res.status(400).json({
             status: "erro",
-            mensagem: "pilot_uid e vessel_uid s\u00e3o obrigat\u00f3rios."
+            mensagem: "pilot_uid e vessel_uid são obrigatórios."
         });
     }
 
@@ -603,7 +595,7 @@ const repairVessel = async (req, res) => {
         );
         if (pilotRows.length === 0) {
             await conn.rollback();
-            return res.status(404).json({ status: "erro", mensagem: "Piloto n\u00e3o encontrado." });
+            return res.status(404).json({ status: "erro", mensagem: "Piloto não encontrado." });
         }
 
         const vesselRows = await conn.query(
@@ -616,7 +608,7 @@ const repairVessel = async (req, res) => {
         );
         if (vesselRows.length === 0) {
             await conn.rollback();
-            return res.status(404).json({ status: "erro", mensagem: "Nave n\u00e3o encontrada para este piloto." });
+            return res.status(404).json({ status: "erro", mensagem: "Nave não encontrada para este piloto." });
         }
 
         const pilot = pilotRows[0];
@@ -626,7 +618,7 @@ const repairVessel = async (req, res) => {
             await conn.rollback();
             return res.status(400).json({
                 status: "erro",
-                mensagem: "A nave precisa estar na mesma esta\u00e7\u00e3o em que voc\u00ea se encontra para realizar reparos."
+                mensagem: "A nave precisa estar na mesma estação em que você se encontra para realizar reparos."
             });
         }
 
@@ -646,7 +638,7 @@ const repairVessel = async (req, res) => {
             const currentVal = Number(vessel[subsystem_key] ?? 100);
             if (currentVal >= 100) {
                 await conn.rollback();
-                return res.status(400).json({ status: "erro", mensagem: "Este subsistema j\u00e1 est\u00e1 em 100%." });
+                return res.status(400).json({ status: "erro", mensagem: "Este subsistema já está em 100%." });
             }
             const subDamage = Math.max(0, 100.0 - currentVal);
             repairCost = Math.round(basePrice * (subDamage / 500.0));
@@ -657,7 +649,7 @@ const repairVessel = async (req, res) => {
             const damagePercent = Math.max(0, 100.0 - avgIntegrity);
             if (damagePercent <= 0) {
                 await conn.rollback();
-                return res.status(400).json({ status: "erro", mensagem: "Todos os subsistemas desta nave j\u00e1 est\u00e3o em 100%!" });
+                return res.status(400).json({ status: "erro", mensagem: "Todos os subsistemas desta nave já estão em 100%!" });
             }
             repairCost = Math.round(basePrice * (damagePercent / 100.0));
             updateSql = `UPDATE vessels SET integrity = 100, engine = 100, sensors = 100, life_support = 100, inertial_damper = 100 WHERE vessel_uid = ? AND pilot_uid = ?`;
@@ -673,7 +665,7 @@ const repairVessel = async (req, res) => {
             await conn.rollback();
             return res.status(400).json({
                 status: "erro",
-                mensagem: `Cr\u00e9ditos insuficientes para o reparo! Custo: ${repairCost} CR | Saldo: ${currentCredits} CR.`
+                mensagem: `Créditos insuficientes para o reparo! Custo: ${repairCost} CR | Saldo: ${currentCredits} CR.`
             });
         }
 
@@ -706,550 +698,196 @@ const repairVessel = async (req, res) => {
     }
 };
 
-// Equipa (ou Compra + Equipa) um item em um slot de Hardpoint da nave
-const equipVesselSlot = async (req, res) => {
-    const { pilot_uid, vessel_uid, db_slot, item_code } = req.body;
-    if (!pilot_uid || !vessel_uid || db_slot === undefined || !item_code) {
-        return res.status(400).json({
-            status: "erro",
-            mensagem: "pilot_uid, vessel_uid, db_slot e item_code s\u00e3o obrigat\u00f3rios."
-        });
-    }
-
-    const slotNum = Number(db_slot);
-    let conn;
-    try {
-        conn = await db.getConnection();
-        await conn.beginTransaction();
-
-        const pilotRows = await conn.query("SELECT orbit, station FROM pilots WHERE pilot_uid = ? LIMIT 1", [pilot_uid]);
-        if (pilotRows.length === 0) {
-            await conn.rollback();
-            return res.status(404).json({ status: "erro", mensagem: "Piloto n\u00e3o encontrado." });
-        }
-        const pilotOrbit = Number(pilotRows[0].orbit || 2);
-        const pilotStation = Number(pilotRows[0].station || 1);
-
-        const vesselRows = await conn.query(
-            "SELECT vessel_uid, orbit, station FROM vessels WHERE vessel_uid = ? AND pilot_uid = ? LIMIT 1 FOR UPDATE",
-            [vessel_uid, pilot_uid]
-        );
-        if (vesselRows.length === 0) {
-            await conn.rollback();
-            return res.status(404).json({ status: "erro", mensagem: "Nave n\u00e3o encontrada." });
-        }
-        if (Number(vesselRows[0].orbit) !== pilotOrbit || Number(vesselRows[0].station) !== pilotStation) {
-            await conn.rollback();
-            return res.status(400).json({
-                status: "erro",
-                mensagem: "A nave precisa estar na mesma esta\u00e7\u00e3o para modificar o Loadout."
-            });
-        }
-
-        const itemRows = await conn.query("SELECT item_code, name, item_type FROM items WHERE item_code = ? AND active = 'SIM' LIMIT 1", [item_code]);
-        if (itemRows.length === 0) {
-            await conn.rollback();
-            return res.status(404).json({ status: "erro", mensagem: "Item n\u00e3o encontrado." });
-        }
-        const itemInfo = itemRows[0];
-        const iType = Number(itemInfo.item_type);
-
-        let eqType = 'weapon';
-        if (iType === 3 || (slotNum >= 100 && slotNum < 200)) eqType = 'missile';
-        else if (iType === 4 || (slotNum >= 200 && slotNum < 300)) eqType = 'device';
-        else if (iType === 5 || (slotNum >= 300 && slotNum < 400)) eqType = 'utility';
-
-        const { marketUid, hangarContainerUid } = await ensureStationContainersAndMarket(conn, pilot_uid, pilotOrbit, pilotStation);
-
-        // 1. Verifica se o jogador ja tem o item no deposito da estacao (hangar) ou na carga da nave (vessel_cargo)
-        const ownedSlots = await conn.query(
-            `SELECT cs.container_uid, cs.slot, cs.amount, c.type
-             FROM container_slots cs
-             INNER JOIN containers c ON c.container_uid = cs.container_uid
-             WHERE c.owner = ? AND ((c.type = 'hangar' AND c.storage = ?) OR c.type = 'vessel_cargo')
-               AND cs.item_code = ? AND cs.amount > 0
-             ORDER BY (c.type = 'hangar') DESC, cs.slot ASC
-             FOR UPDATE`,
-            [pilot_uid, pilotStation, item_code]
-        );
-
-        let boughtFromMarket = false;
-        let buyCost = 0;
-        let sellerLabel = '';
-
-        if (ownedSlots.length > 0) {
-            // Consome 1 unidade do estoque do proprio jogador
-            const targetSlot = ownedSlots[0];
-            if (Number(targetSlot.amount) <= 1) {
-                await conn.query("DELETE FROM container_slots WHERE container_uid = ? AND slot = ?", [targetSlot.container_uid, targetSlot.slot]);
-            } else {
-                await conn.query("UPDATE container_slots SET amount = amount - 1 WHERE container_uid = ? AND slot = ?", [targetSlot.container_uid, targetSlot.slot]);
-            }
-        } else {
-            // Nao tem no estoque do jogador -> Compra automaticamente 1 unidade no mercado da estacao!
-            // Regra: Sempre comprar primeiro de anuncio de jogador (do mais antigo para o mais recente) antes de comprar da estacao!
-            const mktOffers = await conn.query(
-                `SELECT mi.*, p.pilot AS seller_name
-                 FROM market_items mi
-                 LEFT JOIN pilots p ON p.pilot_uid = mi.owner_pilot_uid
-                 WHERE mi.market_uid = ? AND mi.item_code = ? AND mi.stock > 0 AND mi.owner_pilot_uid != ?
-                 ORDER BY (mi.owner_pilot_uid > 0) DESC, mi.last_update ASC, mi.owner_pilot_uid ASC
-                 LIMIT 1 FOR UPDATE`,
-                [marketUid, item_code, pilot_uid]
-            );
-
-            if (mktOffers.length === 0) {
-                await conn.rollback();
-                return res.status(400).json({
-                    status: "erro",
-                    mensagem: "Este item n\u00e3o est\u00e1 dispon\u00edvel nem no seu estoque nem no mercado desta esta\u00e7\u00e3o."
-                });
-            }
-
-            const offer = mktOffers[0];
-            const ownerUid = Number(offer.owner_pilot_uid || 0);
-            buyCost = Math.round(Number(offer.selling_price || 100));
-            sellerLabel = ownerUid > 0 ? ` do piloto ${offer.seller_name || '#' + ownerUid}` : ' da Esta\u00e7\u00e3o';
-
-            const wRows = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE", [pilot_uid]);
-            const buyerBefore = wRows.length > 0 ? Number(wRows[0].credits || 0) : 0;
-
-            if (buyerBefore < buyCost) {
-                await conn.rollback();
-                return res.status(400).json({
-                    status: "erro",
-                    mensagem: `Cr\u00e9ditos insuficientes para comprar ${itemInfo.name}! Necess\u00e1rio: ${buyCost} CR | Saldo: ${buyerBefore} CR.`
-                });
-            }
-
-            const buyerAfter = buyerBefore - buyCost;
-            await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [buyerAfter, pilot_uid]);
-
-            let sellerBefore = 0;
-            let sellerAfter = 0;
-            if (ownerUid > 0) {
-                await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000)", [ownerUid]);
-                const sw = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE", [ownerUid]);
-                sellerBefore = sw.length > 0 ? Number(sw[0].credits || 0) : 0;
-                sellerAfter = sellerBefore + buyCost;
-                await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [sellerAfter, ownerUid]);
-            }
-
-            await conn.query(
-                `INSERT INTO wallet_transactions (wallet_from, wallet_to, amount, balance_from_before, balance_from_after, balance_to_before, balance_to_after, operation_type, reference_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [pilot_uid, ownerUid, buyCost, buyerBefore, buyerAfter, sellerBefore, sellerAfter, ownerUid > 0 ? 'loadout_p2p_buy' : 'loadout_station_buy', item_code]
-            );
-
-            const newStock = Number(offer.stock) - 1;
-            if (ownerUid > 0 && newStock <= 0) {
-                await conn.query("DELETE FROM market_items WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ?", [marketUid, item_code, ownerUid]);
-            } else {
-                await conn.query("UPDATE market_items SET stock = ? WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ?", [newStock, marketUid, item_code, ownerUid]);
-            }
-
-            boughtFromMarket = true;
-        }
-
-        // 2. Se ja havia um equipamento instalado neste slot, devolve-o para o deposito da estacao do jogador
-        const existingEq = await conn.query(
-            "SELECT item_code, amount FROM vessel_equipments WHERE vessel_uid = ? AND slot = ? FOR UPDATE",
-            [vessel_uid, slotNum]
-        );
-        if (existingEq.length > 0) {
-            const oldItemCode = Number(existingEq[0].item_code);
-            const oldAmt = Math.max(1, Number(existingEq[0].amount || 1));
-            const existingHangarSlot = await conn.query(
-                "SELECT slot FROM container_slots WHERE container_uid = ? AND item_code = ? LIMIT 1 FOR UPDATE",
-                [hangarContainerUid, oldItemCode]
-            );
-            if (existingHangarSlot.length > 0) {
-                await conn.query(
-                    "UPDATE container_slots SET amount = amount + ? WHERE container_uid = ? AND slot = ?",
-                    [oldAmt, hangarContainerUid, existingHangarSlot[0].slot]
-                );
-            } else {
-                const maxSlotRow = await conn.query(
-                    "SELECT COALESCE(MAX(slot), 0) AS max_slot FROM container_slots WHERE container_uid = ?",
-                    [hangarContainerUid]
-                );
-                const nextSlot = Number(maxSlotRow[0].max_slot || 0) + 1;
-                await conn.query(
-                    "INSERT INTO container_slots (container_uid, slot, item_code, amount) VALUES (?, ?, ?, ?)",
-                    [hangarContainerUid, nextSlot, oldItemCode, oldAmt]
-                );
-            }
-        }
-
-        // 3. Instala o novo item no slot da nave
-        await conn.query(
-            `INSERT INTO vessel_equipments (vessel_uid, slot, item_code, type, amount)
-             VALUES (?, ?, ?, ?, 1)
-             ON DUPLICATE KEY UPDATE item_code = VALUES(item_code), type = VALUES(type), amount = 1`,
-            [vessel_uid, slotNum, item_code, eqType]
-        );
-
-        await conn.commit();
-
-        return res.json({
-            status: "sucesso",
-            mensagem: boughtFromMarket
-                ? `${itemInfo.name} comprado${sellerLabel} (-${buyCost} CR) e instalado na nave!`
-                : `${itemInfo.name} equipado na nave com sucesso!`,
-            data: {
-                bought_from_market: boughtFromMarket,
-                buy_cost: buyCost
-            }
-        });
-    } catch (err) {
-        if (conn) await conn.rollback();
-        console.error("[Hangar equipVesselSlot Error]:", err);
-        return res.status(500).json({ status: "erro", mensagem: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
-};
-
-// Desequipa um slot da nave e devolve o item ao deposito da estacao
-const unequipVesselSlot = async (req, res) => {
-    const { pilot_uid, vessel_uid, db_slot } = req.body;
-    if (!pilot_uid || !vessel_uid || db_slot === undefined) {
-        return res.status(400).json({
-            status: "erro",
-            mensagem: "pilot_uid, vessel_uid e db_slot s\u00e3o obrigat\u00f3rios."
-        });
-    }
-
-    const slotNum = Number(db_slot);
-    let conn;
-    try {
-        conn = await db.getConnection();
-        await conn.beginTransaction();
-
-        const pilotRows = await conn.query("SELECT orbit, station FROM pilots WHERE pilot_uid = ? LIMIT 1", [pilot_uid]);
-        if (pilotRows.length === 0) {
-            await conn.rollback();
-            return res.status(404).json({ status: "erro", mensagem: "Piloto n\u00e3o encontrado." });
-        }
-        const pilotOrbit = Number(pilotRows[0].orbit || 2);
-        const pilotStation = Number(pilotRows[0].station || 1);
-
-        const vesselRows = await conn.query(
-            "SELECT vessel_uid, orbit, station FROM vessels WHERE vessel_uid = ? AND pilot_uid = ? LIMIT 1 FOR UPDATE",
-            [vessel_uid, pilot_uid]
-        );
-        if (vesselRows.length === 0 || Number(vesselRows[0].orbit) !== pilotOrbit || Number(vesselRows[0].station) !== pilotStation) {
-            await conn.rollback();
-            return res.status(400).json({
-                status: "erro",
-                mensagem: "A nave precisa estar na mesma esta\u00e7\u00e3o para desequipar itens."
-            });
-        }
-
-        const existingEq = await conn.query(
-            `SELECT ve.item_code, ve.amount, i.name AS item_name
-             FROM vessel_equipments ve
-             INNER JOIN items i ON i.item_code = ve.item_code
-             WHERE ve.vessel_uid = ? AND ve.slot = ? FOR UPDATE`,
-            [vessel_uid, slotNum]
-        );
-        if (existingEq.length === 0) {
-            await conn.rollback();
-            return res.status(404).json({ status: "erro", mensagem: "Este slot j\u00e1 est\u00e1 vazio." });
-        }
-
-        const oldItemCode = Number(existingEq[0].item_code);
-        const oldAmt = Math.max(1, Number(existingEq[0].amount || 1));
-        const itemName = existingEq[0].item_name;
-
-        const { hangarContainerUid } = await ensureStationContainersAndMarket(conn, pilot_uid, pilotOrbit, pilotStation);
-
-        await conn.query("DELETE FROM vessel_equipments WHERE vessel_uid = ? AND slot = ?", [vessel_uid, slotNum]);
-
-        const existingHangarSlot = await conn.query(
-            "SELECT slot FROM container_slots WHERE container_uid = ? AND item_code = ? LIMIT 1 FOR UPDATE",
-            [hangarContainerUid, oldItemCode]
-        );
-        if (existingHangarSlot.length > 0) {
-            await conn.query(
-                "UPDATE container_slots SET amount = amount + ? WHERE container_uid = ? AND slot = ?",
-                [oldAmt, hangarContainerUid, existingHangarSlot[0].slot]
-            );
-        } else {
-            const maxSlotRow = await conn.query(
-                "SELECT COALESCE(MAX(slot), 0) AS max_slot FROM container_slots WHERE container_uid = ?",
-                [hangarContainerUid]
-            );
-            const nextSlot = Number(maxSlotRow[0].max_slot || 0) + 1;
-            await conn.query(
-                "INSERT INTO container_slots (container_uid, slot, item_code, amount) VALUES (?, ?, ?, ?)",
-                [hangarContainerUid, nextSlot, oldItemCode, oldAmt]
-            );
-        }
-
-        await conn.commit();
-
-        return res.json({
-            status: "sucesso",
-            mensagem: `${itemName} removido da nave e guardado no seu dep\u00f3sito da esta\u00e7\u00e3o!`
-        });
-    } catch (err) {
-        if (conn) await conn.rollback();
-        console.error("[Hangar unequipVesselSlot Error]:", err);
-        return res.status(500).json({ status: "erro", mensagem: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
-};
-
-// Helper para consumir quantidade de um container (somando se estiver espalhado em multiplos slots)
-async function removeItemFromContainer(conn, containerUid, itemCode, qtyToRemove) {
-    const slots = await conn.query(
-        "SELECT slot, amount FROM container_slots WHERE container_uid = ? AND item_code = ? AND amount > 0 ORDER BY slot ASC FOR UPDATE",
-        [containerUid, itemCode]
-    );
-    const totalAvailable = slots.reduce((acc, s) => acc + Number(s.amount || 0), 0);
-    if (totalAvailable < qtyToRemove) {
-        return { ok: false, available: totalAvailable };
-    }
-    let remaining = qtyToRemove;
-    for (const s of slots) {
-        if (remaining <= 0) break;
-        const amt = Number(s.amount || 0);
-        if (amt <= remaining) {
-            await conn.query("DELETE FROM container_slots WHERE container_uid = ? AND slot = ?", [containerUid, s.slot]);
-            remaining -= amt;
-        } else {
-            await conn.query("UPDATE container_slots SET amount = amount - ? WHERE container_uid = ? AND slot = ?", [remaining, containerUid, s.slot]);
-            remaining = 0;
-        }
-    }
-    return { ok: true, available: totalAvailable };
-}
-
-// Helper para adicionar quantidade a um container
-async function addItemToContainer(conn, containerUid, itemCode, qtyToAdd) {
-    const existing = await conn.query(
-        "SELECT slot, amount FROM container_slots WHERE container_uid = ? AND item_code = ? ORDER BY slot ASC LIMIT 1 FOR UPDATE",
-        [containerUid, itemCode]
-    );
-    if (existing.length > 0) {
-        await conn.query(
-            "UPDATE container_slots SET amount = amount + ? WHERE container_uid = ? AND slot = ?",
-            [qtyToAdd, containerUid, existing[0].slot]
-        );
-    } else {
-        const maxRow = await conn.query(
-            "SELECT COALESCE(MAX(slot), 0) AS max_slot FROM container_slots WHERE container_uid = ?",
-            [containerUid]
-        );
-        const nextSlot = Number(maxRow[0].max_slot || 0) + 1;
-        await conn.query(
-            "INSERT INTO container_slots (container_uid, slot, item_code, amount) VALUES (?, ?, ?, ?)",
-            [containerUid, nextSlot, itemCode, qtyToAdd]
-        );
-    }
-}
-
-async function syncContainerVolume(conn, containerUid) {
-    const rows = await conn.query(
-        `SELECT COALESCE(SUM(cs.amount * GREATEST(1, COALESCE(i.volume, 1))), 0) AS used_vol
-         FROM container_slots cs
-         INNER JOIN items i ON i.item_code = cs.item_code
-         WHERE cs.container_uid = ? AND cs.amount > 0`,
-        [containerUid]
-    );
-    const usedVol = Number(rows[0]?.used_vol || 0);
-    await conn.query("UPDATE containers SET current_volume = ? WHERE container_uid = ?", [usedVol, containerUid]);
-    return usedVol;
-}
-
-const getPilotInventory = async (req, res) => {
+const getHangarInventory = async (req, res) => {
     const pilotUid = req.params.pilotUid || req.query.pilot_uid;
     if (!pilotUid) {
-        return res.status(400).json({ status: "erro", mensagem: "Par\u00e2metro pilot_uid \u00e9 obrigat\u00f3rio." });
+        return res.status(400).json({ status: "erro", mensagem: "pilotUid é obrigatório." });
     }
 
     let conn;
     try {
         conn = await db.getConnection();
 
+        // 1. Localização atual do piloto
         const pilotRows = await conn.query(
-            `SELECT p.pilot_uid, p.orbit, p.station, s.name AS orbit_name, st.name AS station_name
+            `SELECT p.pilot_uid, p.pilot AS pilot_name, p.orbit, p.station, p.docked,
+                    s.name AS orbit_name,
+                    st.name AS station_name
              FROM pilots p
              LEFT JOIN orbits s ON s.id = p.orbit
              LEFT JOIN orbit_stations st ON st.id = p.station
-             WHERE p.pilot_uid = ? LIMIT 1`,
+             WHERE p.pilot_uid = ?
+             LIMIT 1`,
             [pilotUid]
         );
-        const pilot = pilotRows.length > 0 ? pilotRows[0] : null;
-        const pilotOrbit = pilot ? Number(pilot.orbit || 2) : 2;
-        const pilotStation = pilot ? Number(pilot.station || 1) : 1;
 
-        const { hangarContainerUid } = await ensureStationContainersAndMarket(conn, pilotUid, pilotOrbit, pilotStation);
+        if (pilotRows.length === 0) {
+            return res.status(404).json({ status: "erro", mensagem: "Piloto não encontrado." });
+        }
 
-        const hangarContRows = await conn.query(
-            "SELECT container_uid, max_volume, current_volume FROM containers WHERE container_uid = ? LIMIT 1",
-            [hangarContainerUid]
+        const pilot = pilotRows[0];
+        const stationId = Number(pilot.station) || 1;
+        const orbitId = Number(pilot.orbit) || 2;
+        const stationName = pilot.station_name || `ESTAÇÃO ${stationId}`;
+
+        // 2. Container do depósito da estação (hangar)
+        let contRows = await conn.query(
+            "SELECT container_uid, max_volume, current_volume FROM containers WHERE owner = ? AND storage = ? AND type = 'hangar' LIMIT 1",
+            [pilotUid, stationId]
         );
-        const maxStationVolume = Number(hangarContRows[0]?.max_volume || 50000);
+        let stationContainer;
+        if (contRows.length === 0) {
+            const resInsert = await conn.query(
+                "INSERT INTO containers (owner, storage, type, max_volume, current_volume, protected) VALUES (?, ?, 'hangar', 50000, 0, 'y')",
+                [pilotUid, stationId]
+            );
+            stationContainer = { container_uid: Number(resInsert.insertId), max_volume: 50000, current_volume: 0 };
+        } else {
+            stationContainer = contRows[0];
+        }
+        const stationContainerUid = Number(stationContainer.container_uid);
+        const stationMaxVol = Number(stationContainer.max_volume) || 50000;
 
-        const stationItemRows = await conn.query(
-            `SELECT 
-                cs.item_code,
-                SUM(cs.amount) AS total_amount,
-                i.name AS item_name,
-                i.item_type,
-                GREATEST(1, COALESCE(i.volume, 1)) AS unit_volume,
-                i.image,
-                ig.name AS group_name
+        // 3. Itens no depósito da estação
+        const stationSlotRows = await conn.query(
+            `SELECT cs.slot, cs.item_code, cs.amount,
+                    i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image,
+                    ii.image_2d_url, ii.image_3d_url
              FROM container_slots cs
              INNER JOIN items i ON i.item_code = cs.item_code
-             LEFT JOIN item_groups ig ON ig.group_code = i.group_code
-             WHERE cs.container_uid = ? AND cs.amount > 0 AND i.item_type IN (1, 2, 3, 4, 5) AND i.active = 'SIM'
-             GROUP BY cs.item_code
-             ORDER BY i.item_type ASC, i.item_code ASC`,
-            [hangarContainerUid]
+             LEFT JOIN item_images ii ON ii.item_code = i.item_code
+             WHERE cs.container_uid = ? AND cs.amount > 0
+             ORDER BY i.item_type ASC, i.name ASC`,
+            [stationContainerUid]
         );
 
-        let usedStationVolume = 0;
-        const stationItems = stationItemRows.map(r => {
-            const amt = Number(r.total_amount || 0);
-            const unitVol = Number(r.unit_volume || 1);
-            const totalVol = amt * unitVol;
-            usedStationVolume += totalVol;
+        let stationUsedVol = 0;
+        const stationItems = stationSlotRows.map(r => {
+            const amount = Number(r.amount);
+            const unitVol = Number(r.volume || 1);
+            const totalVol = amount * unitVol;
+            stationUsedVol += totalVol;
+
+            let img = r.image_2d_url || r.image || null;
+            if (img && !img.startsWith('http') && !img.startsWith('/')) {
+                img = `/uploads/${img}`;
+            }
+
             return {
                 item_code: Number(r.item_code),
-                item_code_formatted: formatItemCode(r.item_code),
-                name: r.item_name,
+                name: String(r.name || '').toUpperCase(),
                 item_type: Number(r.item_type),
-                group_name: r.group_name || '',
+                amount,
                 unit_volume: unitVol,
+                volume: unitVol,
                 total_volume: totalVol,
-                amount: amt,
-                image_url: r.image || null
+                image_url: img
             };
         });
-        await conn.query("UPDATE containers SET current_volume = ? WHERE container_uid = ?", [usedStationVolume, hangarContainerUid]);
 
-        // Naves do piloto que estao na mesma estacao
+        if (Number(stationContainer.current_volume) !== stationUsedVol) {
+            await conn.query("UPDATE containers SET current_volume = ? WHERE container_uid = ?", [stationUsedVol, stationContainerUid]);
+        }
+
+        // 4. Naves do piloto atracadas na estação atual
         const vesselRows = await conn.query(
-            `SELECT 
-                v.vessel_uid,
-                v.pilot_uid,
-                v.item_code,
-                v.selected,
-                v.orbit,
-                v.station,
-                v.cargo_capacity,
-                COALESCE(i.name, CONCAT('Nave #', v.vessel_uid)) AS vessel_name,
-                COALESCE(i.volume, 0) AS ship_volume,
-                ii.image_2d_url
+            `SELECT v.vessel_uid, v.pilot_uid, v.item_code, v.selected,
+                    v.orbit, v.station,
+                    COALESCE(i.name, CONCAT('Nave #', v.vessel_uid)) AS vessel_name,
+                    COALESCE(i.volume, 1000) AS ship_volume,
+                    ii.image_2d_url, ii.image_3d_url
              FROM vessels v
              LEFT JOIN items i ON i.item_code = v.item_code
              LEFT JOIN item_images ii ON ii.item_code = v.item_code
              WHERE v.pilot_uid = ? AND v.orbit = ? AND v.station = ?
              ORDER BY (v.selected = 'y') DESC, v.vessel_uid ASC`,
-            [pilotUid, pilotOrbit, pilotStation]
+            [pilotUid, orbitId, stationId]
         );
 
         const vessels = [];
         for (const v of vesselRows) {
             const vUid = Number(v.vessel_uid);
-            const shipVol = Number(v.ship_volume || 0);
-            const maxCargoVol = Number(v.cargo_capacity) > 0
-                ? Number(v.cargo_capacity)
-                : Math.ceil(shipVol * 0.30);
+            const defaultShipMaxCargo = Math.round(Number(v.ship_volume || 1000) * 0.3) || 300;
 
-            if (Number(v.cargo_capacity) !== maxCargoVol) {
-                await conn.query("UPDATE vessels SET cargo_capacity = ? WHERE vessel_uid = ?", [maxCargoVol, vUid]);
-            }
-
-            // Garante o container de carga da nave
-            let vcRows = await conn.query(
-                "SELECT container_uid, max_volume FROM containers WHERE storage = ? AND type = 'vessel_cargo' LIMIT 1",
-                [vUid]
+            let cargoContRows = await conn.query(
+                "SELECT container_uid, max_volume, current_volume FROM containers WHERE owner = ? AND storage = ? AND type = 'vessel_cargo' LIMIT 1",
+                [pilotUid, vUid]
             );
-            let vesselContainerUid;
-            if (vcRows.length === 0) {
-                const ins = await conn.query(
+            let cargoContainer;
+            if (cargoContRows.length === 0) {
+                const insCargo = await conn.query(
                     "INSERT INTO containers (owner, storage, type, max_volume, current_volume, protected) VALUES (?, ?, 'vessel_cargo', ?, 0, 'n')",
-                    [pilotUid, vUid, maxCargoVol]
+                    [pilotUid, vUid, defaultShipMaxCargo]
                 );
-                vesselContainerUid = Number(ins.insertId);
+                cargoContainer = { container_uid: Number(insCargo.insertId), max_volume: defaultShipMaxCargo, current_volume: 0 };
             } else {
-                vesselContainerUid = Number(vcRows[0].container_uid);
-                if (Number(vcRows[0].max_volume) !== maxCargoVol) {
-                    await conn.query("UPDATE containers SET owner = ?, max_volume = ? WHERE container_uid = ?", [pilotUid, maxCargoVol, vesselContainerUid]);
-                }
+                cargoContainer = cargoContRows[0];
             }
+            const cargoContUid = Number(cargoContainer.container_uid);
+            const cargoMaxVol = Number(cargoContainer.max_volume) || defaultShipMaxCargo;
 
-            const cargoItemRows = await conn.query(
-                `SELECT 
-                    cs.item_code,
-                    SUM(cs.amount) AS total_amount,
-                    i.name AS item_name,
-                    i.item_type,
-                    GREATEST(1, COALESCE(i.volume, 1)) AS unit_volume,
-                    i.image,
-                    ig.name AS group_name
+            const cargoSlotRows = await conn.query(
+                `SELECT cs.slot, cs.item_code, cs.amount,
+                        i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image,
+                        ii.image_2d_url, ii.image_3d_url
                  FROM container_slots cs
                  INNER JOIN items i ON i.item_code = cs.item_code
-                 LEFT JOIN item_groups ig ON ig.group_code = i.group_code
-                 WHERE cs.container_uid = ? AND cs.amount > 0 AND i.item_type IN (1, 2, 3, 4, 5) AND i.active = 'SIM'
-                 GROUP BY cs.item_code
-                 ORDER BY i.item_type ASC, i.item_code ASC`,
-                [vesselContainerUid]
+                 LEFT JOIN item_images ii ON ii.item_code = i.item_code
+                 WHERE cs.container_uid = ? AND cs.amount > 0
+                 ORDER BY i.item_type ASC, i.name ASC`,
+                [cargoContUid]
             );
 
-            let usedCargoVol = 0;
-            const cargoItems = cargoItemRows.map(r => {
-                const amt = Number(r.total_amount || 0);
-                const unitVol = Number(r.unit_volume || 1);
-                const totalVol = amt * unitVol;
-                usedCargoVol += totalVol;
+            let cargoUsedVol = 0;
+            const cargoItems = cargoSlotRows.map(cr => {
+                const amt = Number(cr.amount);
+                const uVol = Number(cr.volume || 1);
+                const tVol = amt * uVol;
+                cargoUsedVol += tVol;
+
+                let cImg = cr.image_2d_url || cr.image || null;
+                if (cImg && !cImg.startsWith('http') && !cImg.startsWith('/')) {
+                    cImg = `/uploads/${cImg}`;
+                }
+
                 return {
-                    item_code: Number(r.item_code),
-                    item_code_formatted: formatItemCode(r.item_code),
-                    name: r.item_name,
-                    item_type: Number(r.item_type),
-                    group_name: r.group_name || '',
-                    unit_volume: unitVol,
-                    total_volume: totalVol,
-                    amount: amt,
-                    image_url: r.image || null
+                    item_code: Number(cr.item_code),
+                    name: String(cr.name || '').toUpperCase(),
+                    item_type: Number(cr.item_type),
+                    amount,
+                    unit_volume: uVol,
+                    volume: uVol,
+                    total_volume: tVol,
+                    image_url: cImg
                 };
             });
-            await conn.query("UPDATE containers SET current_volume = ? WHERE container_uid = ?", [usedCargoVol, vesselContainerUid]);
 
-            let hologramUrl = null;
+            if (Number(cargoContainer.current_volume) !== cargoUsedVol) {
+                await conn.query("UPDATE containers SET current_volume = ? WHERE container_uid = ?", [cargoUsedVol, cargoContUid]);
+            }
+
+            let holoUrl = null;
             if (v.image_2d_url && String(v.image_2d_url).trim() !== '') {
                 const rawPath = String(v.image_2d_url).trim();
                 if (rawPath.startsWith('http://') || rawPath.startsWith('https://')) {
-                    hologramUrl = rawPath;
+                    holoUrl = rawPath;
                 } else {
                     let fileName = rawPath.split(/[\\/]/).pop();
                     if (fileName) {
                         fileName = fileName.replace(/\.svg$/i, '.png');
-                        hologramUrl = `/hologramas/${encodeURIComponent(fileName)}`;
+                        holoUrl = `/hologramas/${encodeURIComponent(fileName)}`;
                     }
                 }
             }
 
-            const isSelected = String(v.selected || 'n').toLowerCase() === 'y';
-
             vessels.push({
                 vessel_uid: vUid,
-                item_code: Number(v.item_code),
                 name: String(v.vessel_name).toUpperCase(),
-                registry: `Registro #${vUid} \u00b7 item ${formatItemCode(v.item_code)}`,
-                selected: isSelected,
-                status: isSelected ? 'ATIVA' : 'ATRACADA',
-                hologram_url: hologramUrl,
-                ship_volume: shipVol,
-                max_cargo_volume: maxCargoVol,
-                used_cargo_volume: usedCargoVol,
-                available_cargo_volume: Math.max(0, maxCargoVol - usedCargoVol),
+                selected: String(v.selected || 'n').toLowerCase() === 'y',
+                hologram_url: holoUrl,
+                max_cargo_volume: cargoMaxVol,
+                used_cargo_volume: cargoUsedVol,
+                available_cargo_volume: Math.max(0, cargoMaxVol - cargoUsedVol),
                 cargo_items: cargoItems
             });
         }
@@ -1258,18 +896,19 @@ const getPilotInventory = async (req, res) => {
             status: "sucesso",
             data: {
                 station: {
-                    station_id: pilotStation,
-                    station_name: (pilot?.station_name || `ESTA\u00c7\u00c3O ${pilotStation}`).toUpperCase(),
-                    max_volume: maxStationVolume,
-                    used_volume: usedStationVolume,
-                    available_volume: Math.max(0, maxStationVolume - usedStationVolume),
+                    station_id: stationId,
+                    station_name: stationName.toUpperCase(),
+                    max_volume: stationMaxVol,
+                    used_volume: stationUsedVol,
+                    available_volume: Math.max(0, stationMaxVol - stationUsedVol),
                     items: stationItems
                 },
                 vessels
             }
         });
+
     } catch (err) {
-        console.error("[Hangar getPilotInventory Error]:", err);
+        console.error("[Hangar getHangarInventory Error]:", err);
         return res.status(500).json({ status: "erro", mensagem: err.message });
     } finally {
         if (conn) conn.release();
@@ -1278,147 +917,562 @@ const getPilotInventory = async (req, res) => {
 
 const transferCargo = async (req, res) => {
     const { pilot_uid, vessel_uid, item_code, quantity, direction } = req.body;
-    const qty = Math.floor(Number(quantity || 0));
-    if (!pilot_uid || !vessel_uid || !item_code || qty <= 0 || !['TO_SHIP', 'TO_STATION'].includes(direction)) {
+    const qty = parseInt(quantity, 10);
+
+    if (!pilot_uid || !vessel_uid || !item_code || !qty || qty <= 0 || !direction) {
         return res.status(400).json({
             status: "erro",
-            mensagem: "Par\u00e2metros inv\u00e1lidos para transfer\u00eancia de carga."
+            mensagem: "Parâmetros inválidos para transferência de carga."
         });
     }
+
+    if (direction !== 'TO_VESSEL' && direction !== 'TO_STATION' && direction !== 'TO_SHIP') {
+        return res.status(400).json({
+            status: "erro",
+            mensagem: "Direção inválida. Use 'TO_VESSEL' ou 'TO_STATION'."
+        });
+    }
+
+    const normDirection = (direction === 'TO_SHIP') ? 'TO_VESSEL' : direction;
 
     let conn;
     try {
         conn = await db.getConnection();
         await conn.beginTransaction();
 
-        const pilotRows = await conn.query("SELECT orbit, station FROM pilots WHERE pilot_uid = ? LIMIT 1", [pilot_uid]);
+        // 1. Verifica localização do piloto
+        const pilotRows = await conn.query(
+            "SELECT orbit, station FROM pilots WHERE pilot_uid = ? LIMIT 1",
+            [pilot_uid]
+        );
         if (pilotRows.length === 0) {
             await conn.rollback();
-            return res.status(404).json({ status: "erro", mensagem: "Piloto n\u00e3o encontrado." });
+            return res.status(404).json({ status: "erro", mensagem: "Piloto não encontrado." });
         }
-        const pilotOrbit = Number(pilotRows[0].orbit || 2);
-        const pilotStation = Number(pilotRows[0].station || 1);
+        const stationId = Number(pilotRows[0].station) || 1;
 
+        // 2. Verifica a nave e se está na mesma estação
         const vesselRows = await conn.query(
-            `SELECT v.vessel_uid, v.orbit, v.station, v.cargo_capacity, COALESCE(i.volume, 0) AS ship_volume, COALESCE(i.name, 'Nave') AS vessel_name
-             FROM vessels v
-             LEFT JOIN items i ON i.item_code = v.item_code
-             WHERE v.vessel_uid = ? AND v.pilot_uid = ? LIMIT 1 FOR UPDATE`,
+            "SELECT vessel_uid, orbit, station FROM vessels WHERE vessel_uid = ? AND pilot_uid = ? LIMIT 1",
             [vessel_uid, pilot_uid]
         );
         if (vesselRows.length === 0) {
             await conn.rollback();
-            return res.status(404).json({ status: "erro", mensagem: "Nave n\u00e3o encontrada." });
+            return res.status(404).json({ status: "erro", mensagem: "Nave não encontrada." });
         }
-        const vessel = vesselRows[0];
-        if (Number(vessel.orbit) !== pilotOrbit || Number(vessel.station) !== pilotStation) {
+        if (Number(vesselRows[0].station) !== stationId) {
             await conn.rollback();
             return res.status(400).json({
                 status: "erro",
-                mensagem: "A nave precisa estar atracada na esta\u00e7\u00e3o atual para transferir carga."
+                mensagem: "A nave não está atracada na mesma estação que você."
             });
         }
 
+        // 3. Obtém dados do item (volume)
         const itemRows = await conn.query(
-            "SELECT item_code, name, item_type, GREATEST(1, COALESCE(volume, 1)) AS unit_volume FROM items WHERE item_code = ? AND active = 'SIM' LIMIT 1",
+            "SELECT item_code, COALESCE(volume, 1) AS volume FROM items WHERE item_code = ? LIMIT 1",
             [item_code]
         );
         if (itemRows.length === 0) {
             await conn.rollback();
-            return res.status(404).json({ status: "erro", mensagem: "Item n\u00e3o encontrado." });
+            return res.status(404).json({ status: "erro", mensagem: "Item não encontrado." });
         }
-        const item = itemRows[0];
-        const unitVol = Number(item.unit_volume || 1);
-        const moveVolume = unitVol * qty;
+        const itemVolume = Number(itemRows[0].volume || 1);
+        const totalVolumeToMove = qty * itemVolume;
 
-        const { hangarContainerUid } = await ensureStationContainersAndMarket(conn, pilot_uid, pilotOrbit, pilotStation);
+        // 4. Obtém os containers de hangar e nave
         const hangarContRows = await conn.query(
-            "SELECT container_uid, max_volume FROM containers WHERE container_uid = ? FOR UPDATE",
-            [hangarContainerUid]
+            "SELECT container_uid, max_volume, current_volume FROM containers WHERE owner = ? AND storage = ? AND type = 'hangar' LIMIT 1 FOR UPDATE",
+            [pilot_uid, stationId]
         );
-        const maxStationVolume = Number(hangarContRows[0]?.max_volume || 50000);
-        const usedStationVolume = await syncContainerVolume(conn, hangarContainerUid);
+        if (hangarContRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: "erro", mensagem: "Depósito da estação não encontrado." });
+        }
+        const hangarContainer = hangarContRows[0];
+        const hangarUid = Number(hangarContainer.container_uid);
 
-        const maxShipCargoVolume = Number(vessel.cargo_capacity) > 0
-            ? Number(vessel.cargo_capacity)
-            : Math.ceil(Number(vessel.ship_volume || 0) * 0.30);
-
-        let vcRows = await conn.query(
-            "SELECT container_uid FROM containers WHERE storage = ? AND type = 'vessel_cargo' LIMIT 1 FOR UPDATE",
-            [vessel_uid]
+        const shipContRows = await conn.query(
+            "SELECT container_uid, max_volume, current_volume FROM containers WHERE owner = ? AND storage = ? AND type = 'vessel_cargo' LIMIT 1 FOR UPDATE",
+            [pilot_uid, vessel_uid]
         );
-        let vesselContainerUid;
-        if (vcRows.length === 0) {
-            const ins = await conn.query(
-                "INSERT INTO containers (owner, storage, type, max_volume, current_volume, protected) VALUES (?, ?, 'vessel_cargo', ?, 0, 'n')",
-                [pilot_uid, vessel_uid, maxShipCargoVolume]
+        if (shipContRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: "erro", mensagem: "Compartimento de carga da nave não encontrado." });
+        }
+        const shipContainer = shipContRows[0];
+        const shipUid = Number(shipContainer.container_uid);
+
+        // Dedução
+        const deductItems = async (cUid, itCode, amountToDeduct) => {
+            const slots = await conn.query(
+                "SELECT slot, amount FROM container_slots WHERE container_uid = ? AND item_code = ? ORDER BY slot ASC FOR UPDATE",
+                [cUid, itCode]
             );
-            vesselContainerUid = Number(ins.insertId);
-        } else {
-            vesselContainerUid = Number(vcRows[0].container_uid);
+            const totalAvail = slots.reduce((acc, s) => acc + Number(s.amount), 0);
+            if (totalAvail < amountToDeduct) {
+                return false;
+            }
+            let rem = amountToDeduct;
+            for (const s of slots) {
+                if (rem <= 0) break;
+                const slotAmt = Number(s.amount);
+                if (slotAmt <= rem) {
+                    await conn.query("DELETE FROM container_slots WHERE container_uid = ? AND slot = ?", [cUid, s.slot]);
+                    rem -= slotAmt;
+                } else {
+                    await conn.query("UPDATE container_slots SET amount = amount - ? WHERE container_uid = ? AND slot = ?", [rem, cUid, s.slot]);
+                    rem = 0;
+                }
+            }
+            return true;
+        };
+
+        // Adição
+        const addItems = async (cUid, itCode, amountToAdd) => {
+            const existing = await conn.query(
+                "SELECT slot FROM container_slots WHERE container_uid = ? AND item_code = ? LIMIT 1 FOR UPDATE",
+                [cUid, itCode]
+            );
+            if (existing.length > 0) {
+                await conn.query(
+                    "UPDATE container_slots SET amount = amount + ? WHERE container_uid = ? AND slot = ?",
+                    [amountToAdd, cUid, existing[0].slot]
+                );
+            } else {
+                const maxSlotRow = await conn.query(
+                    "SELECT COALESCE(MAX(slot), 0) AS max_slot FROM container_slots WHERE container_uid = ?",
+                    [cUid]
+                );
+                const nextSlot = Number(maxSlotRow[0].max_slot || 0) + 1;
+                await conn.query(
+                    "INSERT INTO container_slots (container_uid, slot, item_code, amount) VALUES (?, ?, ?, ?)",
+                    [cUid, nextSlot, itCode, amountToAdd]
+                );
+            }
+        };
+
+        // Recalcular volume
+        const refreshContainerVolume = async (cUid) => {
+            const volRow = await conn.query(
+                `SELECT COALESCE(SUM(cs.amount * COALESCE(i.volume, 1)), 0) AS total_vol
+                 FROM container_slots cs
+                 INNER JOIN items i ON i.item_code = cs.item_code
+                 WHERE cs.container_uid = ?`,
+                [cUid]
+            );
+            const vol = Number(volRow[0].total_vol || 0);
+            await conn.query("UPDATE containers SET current_volume = ? WHERE container_uid = ?", [vol, cUid]);
+            return vol;
+        };
+
+        if (normDirection === 'TO_VESSEL') {
+            const shipAvailVol = Number(shipContainer.max_volume) - Number(shipContainer.current_volume);
+            if (totalVolumeToMove > shipAvailVol) {
+                await conn.rollback();
+                return res.status(400).json({
+                    status: "erro",
+                    mensagem: `Espaço insuficiente na nave. Necessário: ${totalVolumeToMove}m³, Disponível: ${shipAvailVol}m³.`
+                });
+            }
+            const deducted = await deductItems(hangarUid, item_code, qty);
+            if (!deducted) {
+                await conn.rollback();
+                return res.status(400).json({
+                    status: "erro",
+                    mensagem: "Quantidade insuficiente no depósito da estação."
+                });
+            }
+            await addItems(shipUid, item_code, qty);
+
+        } else if (normDirection === 'TO_STATION') {
+            const hangarAvailVol = Number(hangarContainer.max_volume) - Number(hangarContainer.current_volume);
+            if (totalVolumeToMove > hangarAvailVol) {
+                await conn.rollback();
+                return res.status(400).json({
+                    status: "erro",
+                    mensagem: `Espaço insuficiente no depósito da estação. Necessário: ${totalVolumeToMove}m³, Disponível: ${hangarAvailVol}m³.`
+                });
+            }
+            const deducted = await deductItems(shipUid, item_code, qty);
+            if (!deducted) {
+                await conn.rollback();
+                return res.status(400).json({
+                    status: "erro",
+                    mensagem: "Quantidade insuficiente na nave."
+                });
+            }
+            await addItems(hangarUid, item_code, qty);
         }
-        const usedShipCargoVolume = await syncContainerVolume(conn, vesselContainerUid);
 
-        if (direction === 'TO_SHIP') {
-            const availableShipVol = Math.max(0, maxShipCargoVolume - usedShipCargoVolume);
-            if (moveVolume > availableShipVol) {
-                await conn.rollback();
-                return res.status(400).json({
-                    status: "erro",
-                    mensagem: `Espa\u00e7o insuficiente na \u00e1rea de carga da nave ${vessel.vessel_name}! Necess\u00e1rio: ${moveVolume} m\u00b3 | Dispon\u00edvel: ${availableShipVol} m\u00b3.`
-                });
-            }
-
-            const rem = await removeItemFromContainer(conn, hangarContainerUid, item_code, qty);
-            if (!rem.ok) {
-                await conn.rollback();
-                return res.status(400).json({
-                    status: "erro",
-                    mensagem: `Quantidade insuficiente no dep\u00f3sito da esta\u00e7\u00e3o (dispon\u00edvel: ${rem.available}).`
-                });
-            }
-
-            await addItemToContainer(conn, vesselContainerUid, item_code, qty);
-        } else {
-            const availableStationVol = Math.max(0, maxStationVolume - usedStationVolume);
-            if (moveVolume > availableStationVol) {
-                await conn.rollback();
-                return res.status(400).json({
-                    status: "erro",
-                    mensagem: `Espa\u00e7o insuficiente no dep\u00f3sito da esta\u00e7\u00e3o! Necess\u00e1rio: ${moveVolume} m\u00b3 | Dispon\u00edvel: ${availableStationVol} m\u00b3.`
-                });
-            }
-
-            const rem = await removeItemFromContainer(conn, vesselContainerUid, item_code, qty);
-            if (!rem.ok) {
-                await conn.rollback();
-                return res.status(400).json({
-                    status: "erro",
-                    mensagem: `Quantidade insuficiente na carga da nave (dispon\u00edvel: ${rem.available}).`
-                });
-            }
-
-            await addItemToContainer(conn, hangarContainerUid, item_code, qty);
-        }
-
-        const newStationVol = await syncContainerVolume(conn, hangarContainerUid);
-        const newShipVol = await syncContainerVolume(conn, vesselContainerUid);
+        const newStationVol = await refreshContainerVolume(hangarUid);
+        const newShipVol = await refreshContainerVolume(shipUid);
 
         await conn.commit();
 
         return res.json({
             status: "sucesso",
-            mensagem: direction === 'TO_SHIP'
-                ? `${qty}x ${item.name} (${moveVolume} m\u00b3) transferido(s) PARA A NAVE ${vessel.vessel_name}!`
-                : `${qty}x ${item.name} (${moveVolume} m\u00b3) transferido(s) PARA A ESTA\u00c7\u00c3O!`,
+            mensagem: "Carga transferida com sucesso!",
             data: {
                 used_station_volume: newStationVol,
                 used_ship_volume: newShipVol
             }
         });
+
     } catch (err) {
         if (conn) await conn.rollback();
         console.error("[Hangar transferCargo Error]:", err);
+        return res.status(500).json({ status: "erro", mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+const equipSlot = async (req, res) => {
+    const { pilot_uid, vessel_uid, db_slot, item_code, buy_if_missing } = req.body;
+    if (!pilot_uid || !vessel_uid || !item_code || db_slot === undefined || db_slot === null) {
+        return res.status(400).json({
+            status: "erro",
+            mensagem: "pilot_uid, vessel_uid, db_slot e item_code são obrigatórios."
+        });
+    }
+
+    const slotNum = parseInt(db_slot, 10);
+    const itemCodeNum = parseInt(item_code, 10);
+    const vesselUidNum = parseInt(vessel_uid, 10);
+    const pilotUidNum = parseInt(pilot_uid, 10);
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+
+        // 1. Piloto e Estação
+        const pilotRows = await conn.query(
+            "SELECT orbit, station FROM pilots WHERE pilot_uid = ? LIMIT 1",
+            [pilotUidNum]
+        );
+        if (pilotRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: "erro", mensagem: "Piloto não encontrado." });
+        }
+        const stationId = Number(pilotRows[0].station) || 1;
+
+        // 2. Nave pertence ao piloto e está na mesma estação
+        const vesselRows = await conn.query(
+            "SELECT vessel_uid, orbit, station, item_code FROM vessels WHERE vessel_uid = ? AND pilot_uid = ? LIMIT 1",
+            [vesselUidNum, pilotUidNum]
+        );
+        if (vesselRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: "erro", mensagem: "Nave não encontrada para este piloto." });
+        }
+        if (Number(vesselRows[0].station) !== stationId) {
+            await conn.rollback();
+            return res.status(400).json({
+                status: "erro",
+                mensagem: "Apenas naves atracadas na mesma estação que você podem ser modificadas."
+            });
+        }
+
+        // 3. Dados do item a equipar
+        const itemRows = await conn.query(
+            "SELECT item_code, item_type, name, price, volume FROM items WHERE item_code = ? LIMIT 1",
+            [itemCodeNum]
+        );
+        if (itemRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: "erro", mensagem: "Item não encontrado no catálogo." });
+        }
+        const item = itemRows[0];
+        const itemType = Number(item.item_type);
+
+        let equipType = 'weapon';
+        if (itemType === 2) equipType = 'weapon';
+        else if (itemType === 3) equipType = 'missile';
+        else if (itemType === 4) equipType = 'device';
+        else if (itemType === 5) equipType = 'utility';
+        else {
+            await conn.rollback();
+            return res.status(400).json({
+                status: "erro",
+                mensagem: "Este item não é um equipamento instalável em hardpoints."
+            });
+        }
+
+        // 4. Container do depósito da estação
+        let contRows = await conn.query(
+            "SELECT container_uid FROM containers WHERE owner = ? AND storage = ? AND type = 'hangar' LIMIT 1 FOR UPDATE",
+            [pilotUidNum, stationId]
+        );
+        let hangarUid;
+        if (contRows.length === 0) {
+            const insHangar = await conn.query(
+                "INSERT INTO containers (owner, storage, type, max_volume, current_volume, protected) VALUES (?, ?, 'hangar', 50000, 0, 'y')",
+                [pilotUidNum, stationId]
+            );
+            hangarUid = Number(insHangar.insertId);
+        } else {
+            hangarUid = Number(contRows[0].container_uid);
+        }
+
+        // 5. Verifica se o piloto possui o item no depósito
+        const stockRows = await conn.query(
+            "SELECT slot, amount FROM container_slots WHERE container_uid = ? AND item_code = ? AND amount > 0 ORDER BY slot ASC LIMIT 1 FOR UPDATE",
+            [hangarUid, itemCodeNum]
+        );
+
+        const hasInStock = stockRows.length > 0;
+
+        if (hasInStock) {
+            // Deduz do depósito do piloto
+            const currAmt = Number(stockRows[0].amount);
+            if (currAmt > 1) {
+                await conn.query(
+                    "UPDATE container_slots SET amount = amount - 1 WHERE container_uid = ? AND slot = ?",
+                    [hangarUid, stockRows[0].slot]
+                );
+            } else {
+                await conn.query(
+                    "DELETE FROM container_slots WHERE container_uid = ? AND slot = ?",
+                    [hangarUid, stockRows[0].slot]
+                );
+            }
+        } else if (buy_if_missing) {
+            // Compra do mercado da estação
+            const mktRows = await conn.query(
+                "SELECT selling_price FROM market_items WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = 0 LIMIT 1",
+                [stationId, itemCodeNum]
+            );
+            const unitPrice = mktRows.length > 0 ? Number(mktRows[0].selling_price) : Number(item.price || 10000);
+
+            const walletRows = await conn.query(
+                "SELECT credits FROM wallets WHERE wallet_uid = ? LIMIT 1 FOR UPDATE",
+                [pilotUidNum]
+            );
+            const currentCredits = walletRows.length > 0 ? Number(walletRows[0].credits) : 0;
+            if (currentCredits < unitPrice) {
+                await conn.rollback();
+                return res.status(400).json({
+                    status: "erro",
+                    mensagem: `Créditos insuficientes para comprar ${item.name} (${unitPrice.toLocaleString('pt-BR')} CR necessários).`
+                });
+            }
+
+            // Deduz créditos
+            await conn.query(
+                "UPDATE wallets SET credits = credits - ? WHERE wallet_uid = ?",
+                [unitPrice, pilotUidNum]
+            );
+
+            // Se houver registro no station_warehouse, deduz saldo
+            await conn.query(
+                "UPDATE station_warehouse SET stock_balance = GREATEST(0, stock_balance - 1) WHERE station_id = ? AND item_code = ? AND pilot_uid = 0 AND status = 'ativo'",
+                [stationId, itemCodeNum]
+            );
+        } else {
+            await conn.rollback();
+            return res.status(400).json({
+                status: "erro",
+                mensagem: `Você não possui ${item.name} em seu depósito da estação.`
+            });
+        }
+
+        // 6. Verifica se o slot já tinha um item equipado
+        const existingEq = await conn.query(
+            "SELECT item_code, amount, type FROM vessel_equipments WHERE vessel_uid = ? AND slot = ? LIMIT 1 FOR UPDATE",
+            [vesselUidNum, slotNum]
+        );
+
+        if (existingEq.length > 0) {
+            // Devolve o item anterior ao depósito
+            const oldCode = Number(existingEq[0].item_code);
+            const oldAmt = Number(existingEq[0].amount || 1);
+
+            const existingHangarSlot = await conn.query(
+                "SELECT slot FROM container_slots WHERE container_uid = ? AND item_code = ? LIMIT 1 FOR UPDATE",
+                [hangarUid, oldCode]
+            );
+
+            if (existingHangarSlot.length > 0) {
+                await conn.query(
+                    "UPDATE container_slots SET amount = amount + ? WHERE container_uid = ? AND slot = ?",
+                    [oldAmt, hangarUid, existingHangarSlot[0].slot]
+                );
+            } else {
+                const maxSlotRow = await conn.query(
+                    "SELECT COALESCE(MAX(slot), -1) AS max_slot FROM container_slots WHERE container_uid = ?",
+                    [hangarUid]
+                );
+                const nextSlot = Number(maxSlotRow[0].max_slot || -1) + 1;
+                await conn.query(
+                    "INSERT INTO container_slots (container_uid, slot, item_code, amount) VALUES (?, ?, ?, ?)",
+                    [hangarUid, nextSlot, oldCode, oldAmt]
+                );
+            }
+        }
+
+        // 7. Equipa o novo item no slot
+        await conn.query(
+            `INSERT INTO vessel_equipments (vessel_uid, slot, item_code, type, amount)
+             VALUES (?, ?, ?, ?, 1)
+             ON DUPLICATE KEY UPDATE item_code = VALUES(item_code), type = VALUES(type), amount = VALUES(amount)`,
+            [vesselUidNum, slotNum, itemCodeNum, equipType]
+        );
+
+        // 8. Atualiza volume do depósito
+        const volRow = await conn.query(
+            `SELECT COALESCE(SUM(cs.amount * COALESCE(i.volume, 1)), 0) AS total_vol
+             FROM container_slots cs
+             INNER JOIN items i ON i.item_code = cs.item_code
+             WHERE cs.container_uid = ?`,
+            [hangarUid]
+        );
+        await conn.query("UPDATE containers SET current_volume = ? WHERE container_uid = ?", [Number(volRow[0].total_vol || 0), hangarUid]);
+
+        await conn.commit();
+
+        return res.json({
+            status: "sucesso",
+            mensagem: `${item.name} equipado com sucesso!`
+        });
+
+    } catch (err) {
+        if (conn) await conn.rollback();
+        console.error("[Hangar equipSlot Error]:", err);
+        return res.status(500).json({ status: "erro", mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+const unequipSlot = async (req, res) => {
+    const { pilot_uid, vessel_uid, db_slot } = req.body;
+    if (!pilot_uid || !vessel_uid || db_slot === undefined || db_slot === null) {
+        return res.status(400).json({
+            status: "erro",
+            mensagem: "pilot_uid, vessel_uid e db_slot são obrigatórios."
+        });
+    }
+
+    const slotNum = parseInt(db_slot, 10);
+    const vesselUidNum = parseInt(vessel_uid, 10);
+    const pilotUidNum = parseInt(pilot_uid, 10);
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+
+        // 1. Piloto e Estação
+        const pilotRows = await conn.query(
+            "SELECT orbit, station FROM pilots WHERE pilot_uid = ? LIMIT 1",
+            [pilotUidNum]
+        );
+        if (pilotRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: "erro", mensagem: "Piloto não encontrado." });
+        }
+        const stationId = Number(pilotRows[0].station) || 1;
+
+        // 2. Nave pertence ao piloto e está na mesma estação
+        const vesselRows = await conn.query(
+            "SELECT vessel_uid, orbit, station FROM vessels WHERE vessel_uid = ? AND pilot_uid = ? LIMIT 1",
+            [vesselUidNum, pilotUidNum]
+        );
+        if (vesselRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: "erro", mensagem: "Nave não encontrada para este piloto." });
+        }
+        if (Number(vesselRows[0].station) !== stationId) {
+            await conn.rollback();
+            return res.status(400).json({
+                status: "erro",
+                mensagem: "Apenas naves atracadas na mesma estação que você podem ter o loadout modificado."
+            });
+        }
+
+        // 3. Item atualmente no slot
+        const eqRows = await conn.query(
+            "SELECT item_code, amount, type FROM vessel_equipments WHERE vessel_uid = ? AND slot = ? LIMIT 1 FOR UPDATE",
+            [vesselUidNum, slotNum]
+        );
+        if (eqRows.length === 0) {
+            await conn.rollback();
+            return res.json({
+                status: "sucesso",
+                mensagem: "O slot já se encontra vazio."
+            });
+        }
+
+        const oldCode = Number(eqRows[0].item_code);
+        const oldAmt = Number(eqRows[0].amount || 1);
+
+        // 4. Container do depósito da estação
+        let contRows = await conn.query(
+            "SELECT container_uid FROM containers WHERE owner = ? AND storage = ? AND type = 'hangar' LIMIT 1 FOR UPDATE",
+            [pilotUidNum, stationId]
+        );
+        let hangarUid;
+        if (contRows.length === 0) {
+            const insHangar = await conn.query(
+                "INSERT INTO containers (owner, storage, type, max_volume, current_volume, protected) VALUES (?, ?, 'hangar', 50000, 0, 'y')",
+                [pilotUidNum, stationId]
+            );
+            hangarUid = Number(insHangar.insertId);
+        } else {
+            hangarUid = Number(contRows[0].container_uid);
+        }
+
+        // 5. Devolve ao depósito da estação
+        const existingSlot = await conn.query(
+            "SELECT slot FROM container_slots WHERE container_uid = ? AND item_code = ? LIMIT 1 FOR UPDATE",
+            [hangarUid, oldCode]
+        );
+
+        if (existingSlot.length > 0) {
+            await conn.query(
+                "UPDATE container_slots SET amount = amount + ? WHERE container_uid = ? AND slot = ?",
+                [oldAmt, hangarUid, existingSlot[0].slot]
+            );
+        } else {
+            const maxSlotRow = await conn.query(
+                "SELECT COALESCE(MAX(slot), -1) AS max_slot FROM container_slots WHERE container_uid = ?",
+                [hangarUid]
+            );
+            const nextSlot = Number(maxSlotRow[0].max_slot || -1) + 1;
+            await conn.query(
+                "INSERT INTO container_slots (container_uid, slot, item_code, amount) VALUES (?, ?, ?, ?)",
+                [hangarUid, nextSlot, oldCode, oldAmt]
+            );
+        }
+
+        // 6. Remove do vessel_equipments
+        await conn.query(
+            "DELETE FROM vessel_equipments WHERE vessel_uid = ? AND slot = ?",
+            [vesselUidNum, slotNum]
+        );
+
+        // 7. Atualiza volume do depósito
+        const volRow = await conn.query(
+            `SELECT COALESCE(SUM(cs.amount * COALESCE(i.volume, 1)), 0) AS total_vol
+             FROM container_slots cs
+             INNER JOIN items i ON i.item_code = cs.item_code
+             WHERE cs.container_uid = ?`,
+            [hangarUid]
+        );
+        await conn.query("UPDATE containers SET current_volume = ? WHERE container_uid = ?", [Number(volRow[0].total_vol || 0), hangarUid]);
+
+        await conn.commit();
+
+        return res.json({
+            status: "sucesso",
+            mensagem: "Item removido para o depósito!"
+        });
+
+    } catch (err) {
+        if (conn) await conn.rollback();
+        console.error("[Hangar unequipSlot Error]:", err);
         return res.status(500).json({ status: "erro", mensagem: err.message });
     } finally {
         if (conn) conn.release();
@@ -1429,8 +1483,11 @@ module.exports = {
     getPilotFleet,
     selectActiveVessel,
     repairVessel,
-    equipVesselSlot,
-    unequipVesselSlot,
-    getPilotInventory,
-    transferCargo
+    getHangarInventory,
+    getPilotInventory: getHangarInventory,
+    transferCargo,
+    equipSlot,
+    equipVesselSlot: equipSlot,
+    unequipSlot,
+    unequipVesselSlot: unequipSlot
 };

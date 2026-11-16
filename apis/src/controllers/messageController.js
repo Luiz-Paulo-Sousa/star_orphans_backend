@@ -88,7 +88,7 @@ const getChannelMembers = async (req, res) => {
         // -------------------------------------------------------------
         // 2. CANAL DE ÓRBITA (ORBIT)
         // -------------------------------------------------------------
-        if (channelType === 'orbit') {
+        if (channelType === 'sector' || channelType === 'orbit') {
             const pilotRows = await conn.query(
                 `SELECT orbit FROM pilots WHERE pilot_uid = ?`,
                 [pilotUid]
@@ -589,7 +589,7 @@ const getPilotOrbit = async (req, res) => {
         const list = Array.isArray(rows) && Array.isArray(rows[0]) ? rows[0] : rows;
         if (list.length > 0) {
             const orbitUid = list[0].orbit;
-            return res.json({ status: 'sucesso', orbitUid: orbitUid });
+            return res.json({ status: 'sucesso', orbitUid: orbitUid, sectorUid: orbitUid });
         }
         return res.status(404).json({ error: 'Piloto não encontrado' });
     } catch (error) {

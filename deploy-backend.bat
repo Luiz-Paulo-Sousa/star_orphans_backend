@@ -65,7 +65,7 @@ echo @echo wizard@321> "%TEMP_ASKPASS%"
 set "SSH_ASKPASS=%TEMP_ASKPASS%"
 set "SSH_ASKPASS_REQUIRE=force"
 
-ssh.exe -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null luizp@!SERVER_IP! "docker cp C:\Hyper-V\OrphansSolutions\apis\src\. apis_novas:/usr/src/ && docker restart apis_novas"
+ssh.exe -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null luizp@!SERVER_IP! "docker cp C:\Hyper-V\OrphansSolutions\apis\src\. apis_novas:/usr/src/ && docker exec apis_novas mkdir -p /usr/src/storage/hologramas && docker cp C:\Hyper-V\OrphansSolutions\images\silhouettes\hologramas\. apis_novas:/usr/src/storage/hologramas/ && docker exec apis_novas mkdir -p /usr/src/storage/items && docker cp C:\Hyper-V\OrphansSolutions\apis\src\storage\items\. apis_novas:/usr/src/storage/items/ && docker restart apis_novas"
 if exist "%TEMP_ASKPASS%" del "%TEMP_ASKPASS%" >nul 2>&1
 
 echo.

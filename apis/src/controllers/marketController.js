@@ -187,7 +187,7 @@ const getMarketCatalog = async (req, res) => {
                 mi.selling_price,
                 mi.buying_price,
                 mi.base_price,
-                mi.stock,
+                COALESCE(sw.stock_balance, mi.stock) AS stock,
                 p.pilot AS owner_pilot_name,
                 i.item_type,
                 i.group_code,
@@ -223,6 +223,7 @@ const getMarketCatalog = async (req, res) => {
                 vsp.armor
              FROM market_items mi
              INNER JOIN items i ON i.item_code = mi.item_code
+             LEFT JOIN station_warehouse sw ON sw.station_id = ? AND sw.item_code = mi.item_code AND sw.pilot_uid = mi.owner_pilot_uid AND sw.status = 'ativo'
              LEFT JOIN item_types it ON it.type_code = i.item_type
              LEFT JOIN item_groups ig ON ig.group_code = i.group_code
              LEFT JOIN pilots p ON p.pilot_uid = mi.owner_pilot_uid
@@ -233,7 +234,7 @@ const getMarketCatalog = async (req, res) => {
              LEFT JOIN vessel_specs vsp ON vsp.item_code = i.item_code
              WHERE mi.market_uid = ? AND i.item_type IN (1, 2, 3, 4, 5, 6) AND i.active = 'SIM'
              ORDER BY i.item_type ASC, i.price ASC, i.item_code ASC, mi.owner_pilot_uid ASC`,
-            [ctx.market_uid]
+            [ctx.station, ctx.market_uid]
         );
 
         const stationPriceByItem = {};
