@@ -165,9 +165,9 @@ const getPilotFleet = async (req, res) => {
         const pilotStation = pilot ? Number(pilot.station) : null;
         const pilotCredits = pilot ? Number(pilot.credits || 0) : 0;
 
-        // 2. Obtém todas as naves do piloto na tabela vessels + items + item_images
-        const vesselRows = await conn.query(
-            `SELECT 
+        // 2. Obtém as naves do piloto atracadas na estação atual (ou todas caso query all=true)
+        const allStations = req.query.all === 'true' || req.query.all_stations === 'true';
+        let vesselQuery = `SELECT 
                 v.vessel_uid,
                 v.pilot_uid,
                 v.item_code,
@@ -191,10 +191,16 @@ const getPilotFleet = async (req, res) => {
             LEFT JOIN item_images ii ON ii.item_code = v.item_code
             LEFT JOIN orbits s ON s.id = v.orbit
             LEFT JOIN orbit_stations st ON st.id = v.station
-            WHERE v.pilot_uid = ?
-            ORDER BY (v.selected = 'y') DESC, v.vessel_uid ASC`,
-            [pilotUid]
-        );
+            WHERE v.pilot_uid = ?`;
+        const vesselParams = [pilotUid];
+
+        if (!allStations && pilotOrbit !== null && pilotStation !== null) {
+            vesselQuery += ` AND v.orbit = ? AND v.station = ?`;
+            vesselParams.push(pilotOrbit, pilotStation);
+        }
+
+        vesselQuery += ` ORDER BY (v.selected = 'y') DESC, v.vessel_uid ASC`;
+        const vesselRows = await conn.query(vesselQuery, vesselParams);
 
         const vesselUids = vesselRows.map(r => Number(r.vessel_uid));
         const vesselItemCodes = [...new Set(vesselRows.map(r => Number(r.item_code)))];
@@ -407,7 +413,7 @@ const getPilotFleet = async (req, res) => {
                 vOrbit === pilotOrbit &&
                 vStation === pilotStation;
 
-            const isSelected = String(row.selected || 'n').toLowerCase() === 'y';
+            const isSelected = String(row.selected || 'n').toLowerCase() === 'y' && isAtCurrentStation;
 
             const integrity = Number(row.integrity ?? 100);
             const engine = Number(row.engine ?? 100);
@@ -1479,6 +1485,49 @@ const unequipSlot = async (req, res) => {
     }
 };
 
+const getAssetStations = async (req, res) => {
+    const pilotUid = req.params.pilotUid || req.query.pilot_uid;
+    if (!pilotUid) {
+        return res.status(400).json({ status: "erro", mensagem: "pilotUid é obrigatório." });
+    }
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const rows = await conn.query(
+            `SELECT DISTINCT st.id, st.name
+             FROM orbit_stations st
+             WHERE st.id IN (
+                 SELECT c.storage
+                 FROM containers c
+                 INNER JOIN container_slots cs ON cs.container_uid = c.container_uid
+                 WHERE c.owner = ? AND c.type = 'hangar' AND cs.amount > 0
+                 UNION
+                 SELECT v.station
+                 FROM vessels v
+                 INNER JOIN containers c2 ON c2.owner = ? AND c2.storage = v.vessel_uid AND c2.type = 'vessel_cargo'
+                 INNER JOIN container_slots cs2 ON cs2.container_uid = c2.container_uid
+                 WHERE v.pilot_uid = ? AND cs2.amount > 0
+             )
+             ORDER BY st.name ASC`,
+            [pilotUid, pilotUid, pilotUid]
+        );
+
+        return res.json({
+            status: "sucesso",
+            data: rows.map(r => ({
+                id: Number(r.id),
+                name: String(r.name).toUpperCase()
+            }))
+        });
+    } catch (err) {
+        console.error("[Hangar getAssetStations Error]:", err);
+        return res.status(500).json({ status: "erro", mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
 module.exports = {
     getPilotFleet,
     selectActiveVessel,
@@ -1489,5 +1538,6 @@ module.exports = {
     equipSlot,
     equipVesselSlot: equipSlot,
     unequipSlot,
-    unequipVesselSlot: unequipSlot
+    unequipVesselSlot: unequipSlot,
+    getAssetStations
 };
