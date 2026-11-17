@@ -732,40 +732,81 @@ const getHangarInventory = async (req, res) => {
         }
 
         const pilot = pilotRows[0];
-        const stationId = Number(pilot.station) || 1;
-        const orbitId = Number(pilot.orbit) || 2;
-        const stationName = pilot.station_name || `ESTAÇÃO ${stationId}`;
+        const isAllStations = req.query.station_id === 'all' || req.query.station === 'all' || req.query.all === 'true' || req.query.all_stations === 'true';
+
+        let targetStationId = Number(pilot.station) || 1;
+        let targetOrbitId = Number(pilot.orbit) || 2;
+        let targetStationName = pilot.station_name || `ESTAÇÃO ${targetStationId}`;
+
+        if (!isAllStations && (req.query.station_id || req.query.station)) {
+            const rawStationParam = req.query.station_id || req.query.station;
+            const parsedStId = parseInt(rawStationParam, 10);
+            if (!isNaN(parsedStId) && parsedStId > 0) {
+                targetStationId = parsedStId;
+                const stRows = await conn.query(
+                    `SELECT s.id AS station_id, s.name AS station_name, s.orbit_id, o.name AS orbit_name
+                     FROM orbit_stations s
+                     LEFT JOIN orbits o ON o.id = s.orbit_id
+                     WHERE s.id = ?
+                     LIMIT 1`,
+                    [targetStationId]
+                );
+                if (stRows.length > 0) {
+                    targetStationName = stRows[0].station_name || `ESTAÇÃO ${targetStationId}`;
+                    targetOrbitId = Number(stRows[0].orbit_id) || targetOrbitId;
+                }
+            }
+        }
 
         // 2. Container do depósito da estação (hangar)
-        let contRows = await conn.query(
-            "SELECT container_uid, max_volume, current_volume FROM containers WHERE owner = ? AND storage = ? AND type = 'hangar' LIMIT 1",
-            [pilotUid, stationId]
-        );
-        let stationContainer;
-        if (contRows.length === 0) {
-            const resInsert = await conn.query(
-                "INSERT INTO containers (owner, storage, type, max_volume, current_volume, protected) VALUES (?, ?, 'hangar', 50000, 0, 'y')",
-                [pilotUid, stationId]
-            );
-            stationContainer = { container_uid: Number(resInsert.insertId), max_volume: 50000, current_volume: 0 };
-        } else {
-            stationContainer = contRows[0];
-        }
-        const stationContainerUid = Number(stationContainer.container_uid);
-        const stationMaxVol = Number(stationContainer.max_volume) || 50000;
+        let stationContainerUid = null;
+        let stationMaxVol = 50000;
+        let stationSlotRows = [];
 
-        // 3. Itens no depósito da estação
-        const stationSlotRows = await conn.query(
-            `SELECT cs.slot, cs.item_code, cs.amount,
-                    i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image,
-                    ii.image_2d_url, ii.image_3d_url
-             FROM container_slots cs
-             INNER JOIN items i ON i.item_code = cs.item_code
-             LEFT JOIN item_images ii ON ii.item_code = i.item_code
-             WHERE cs.container_uid = ? AND cs.amount > 0
-             ORDER BY i.item_type ASC, i.name ASC`,
-            [stationContainerUid]
-        );
+        if (isAllStations) {
+            stationSlotRows = await conn.query(
+                `SELECT cs.item_code, SUM(cs.amount) AS amount,
+                        i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image,
+                        ii.image_2d_url, ii.image_3d_url
+                 FROM containers c
+                 INNER JOIN container_slots cs ON cs.container_uid = c.container_uid
+                 INNER JOIN items i ON i.item_code = cs.item_code
+                 LEFT JOIN item_images ii ON ii.item_code = i.item_code
+                 WHERE c.owner = ? AND c.type = 'hangar' AND cs.amount > 0
+                 GROUP BY cs.item_code
+                 ORDER BY i.item_type ASC, i.name ASC`,
+                [pilotUid]
+            );
+        } else {
+            let contRows = await conn.query(
+                "SELECT container_uid, max_volume, current_volume FROM containers WHERE owner = ? AND storage = ? AND type = 'hangar' LIMIT 1",
+                [pilotUid, targetStationId]
+            );
+            let stationContainer;
+            if (contRows.length === 0) {
+                const resInsert = await conn.query(
+                    "INSERT INTO containers (owner, storage, type, max_volume, current_volume, protected) VALUES (?, ?, 'hangar', 50000, 0, 'y')",
+                    [pilotUid, targetStationId]
+                );
+                stationContainer = { container_uid: Number(resInsert.insertId), max_volume: 50000, current_volume: 0 };
+            } else {
+                stationContainer = contRows[0];
+            }
+            stationContainerUid = Number(stationContainer.container_uid);
+            stationMaxVol = Number(stationContainer.max_volume) || 50000;
+
+            stationSlotRows = await conn.query(
+                `SELECT cs.slot, cs.item_code, cs.amount,
+                        i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image,
+                        ii.image_2d_url, ii.image_3d_url
+                 FROM container_slots cs
+                 INNER JOIN items i ON i.item_code = cs.item_code
+                 LEFT JOIN item_images ii ON ii.item_code = i.item_code
+                 WHERE cs.container_uid = ? AND cs.amount > 0
+                 ORDER BY i.item_type ASC, i.name ASC`,
+                [stationContainerUid]
+            );
+        }
 
         let stationUsedVol = 0;
         const stationItems = stationSlotRows.map(r => {
@@ -791,24 +832,33 @@ const getHangarInventory = async (req, res) => {
             };
         });
 
-        if (Number(stationContainer.current_volume) !== stationUsedVol) {
+        if (!isAllStations && stationContainerUid) {
             await conn.query("UPDATE containers SET current_volume = ? WHERE container_uid = ?", [stationUsedVol, stationContainerUid]);
         }
 
-        // 4. Naves do piloto atracadas na estação atual
-        const vesselRows = await conn.query(
-            `SELECT v.vessel_uid, v.pilot_uid, v.item_code, v.selected,
-                    v.orbit, v.station,
-                    COALESCE(i.name, CONCAT('Nave #', v.vessel_uid)) AS vessel_name,
-                    COALESCE(i.volume, 1000) AS ship_volume,
-                    ii.image_2d_url, ii.image_3d_url
-             FROM vessels v
-             LEFT JOIN items i ON i.item_code = v.item_code
-             LEFT JOIN item_images ii ON ii.item_code = v.item_code
-             WHERE v.pilot_uid = ? AND v.orbit = ? AND v.station = ?
-             ORDER BY (v.selected = 'y') DESC, v.vessel_uid ASC`,
-            [pilotUid, orbitId, stationId]
-        );
+        // 4. Naves do piloto atracadas na estação alvo (ou todas caso query all=true)
+        let vesselQuery = `
+            SELECT v.vessel_uid, v.pilot_uid, v.item_code, v.selected,
+                   v.orbit, v.station,
+                   st.name AS station_name,
+                   COALESCE(i.name, CONCAT('Nave #', v.vessel_uid)) AS vessel_name,
+                   COALESCE(i.volume, 1000) AS ship_volume,
+                   ii.image_2d_url, ii.image_3d_url
+            FROM vessels v
+            LEFT JOIN items i ON i.item_code = v.item_code
+            LEFT JOIN item_images ii ON ii.item_code = v.item_code
+            LEFT JOIN orbit_stations st ON st.id = v.station
+            WHERE v.pilot_uid = ?
+        `;
+        const vesselParams = [pilotUid];
+        if (!isAllStations) {
+            vesselQuery += ` AND v.station = ?`;
+            vesselParams.push(targetStationId);
+        }
+        vesselQuery += ` ORDER BY (v.selected = 'y' AND v.station = ?) DESC, v.vessel_uid ASC`;
+        vesselParams.push(Number(pilot.station) || 1);
+
+        const vesselRows = await conn.query(vesselQuery, vesselParams);
 
         const vessels = [];
         for (const v of vesselRows) {
@@ -889,7 +939,11 @@ const getHangarInventory = async (req, res) => {
             vessels.push({
                 vessel_uid: vUid,
                 name: String(v.vessel_name).toUpperCase(),
-                selected: String(v.selected || 'n').toLowerCase() === 'y',
+                selected: String(v.selected || 'n').toLowerCase() === 'y' && Number(v.station) === Number(pilot.station),
+                station_id: Number(v.station),
+                station_name: v.station_name || `ESTAÇÃO ${v.station}`,
+                orbit_id: Number(v.orbit),
+                is_at_current_station: Number(v.station) === Number(pilot.station),
                 hologram_url: holoUrl,
                 max_cargo_volume: cargoMaxVol,
                 used_cargo_volume: cargoUsedVol,
@@ -902,8 +956,8 @@ const getHangarInventory = async (req, res) => {
             status: "sucesso",
             data: {
                 station: {
-                    station_id: stationId,
-                    station_name: stationName.toUpperCase(),
+                    station_id: isAllStations ? null : targetStationId,
+                    station_name: isAllStations ? "TODAS AS ESTAÇÕES" : targetStationName.toUpperCase(),
                     max_volume: stationMaxVol,
                     used_volume: stationUsedVol,
                     available_volume: Math.max(0, stationMaxVol - stationUsedVol),
