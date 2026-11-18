@@ -1,0 +1,178 @@
+const db = require('../config/database');
+
+/**
+ * Consulta o status de corporação do piloto
+ */
+const getCorporationStatus = async (req, res) => {
+    const pilotUid = req.params.pilotUid || req.query.pilot_uid;
+    if (!pilotUid) {
+        return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid é obrigatório.' });
+    }
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+
+        // 1. Verifica se o piloto faz parte de alguma corporação
+        const memberRows = await conn.query(
+            `SELECT 
+                cm.corporation_uid,
+                cm.pilot_uid,
+                cm.role,
+                cm.joined_at,
+                c.name AS corporation_name,
+                c.status AS corporation_status,
+                c.founder_pilot_uid,
+                c.station_uid,
+                COALESCE(c.admission_fee, 0) AS admission_fee,
+                st.name AS station_name,
+                p_founder.pilot AS founder_name
+             FROM corporation_members cm
+             INNER JOIN corporations c ON c.corporation_uid = cm.corporation_uid
+             LEFT JOIN orbit_stations st ON st.id = c.station_uid
+             LEFT JOIN pilots p_founder ON p_founder.pilot_uid = c.founder_pilot_uid
+             WHERE cm.pilot_uid = ?
+             LIMIT 1`,
+            [pilotUid]
+        );
+
+        if (memberRows.length > 0) {
+            const m = memberRows[0];
+            return res.json({
+                status: 'sucesso',
+                data: {
+                    has_corporation: true,
+                    corporation: {
+                        corporation_uid: Number(m.corporation_uid),
+                        name: m.corporation_name,
+                        role: m.role,
+                        joined_at: m.joined_at,
+                        status: m.corporation_status,
+                        founder_pilot_uid: Number(m.founder_pilot_uid),
+                        founder_name: m.founder_name || 'Desconhecido',
+                        station_uid: m.station_uid != null ? Number(m.station_uid) : null,
+                        station_name: m.station_name || 'Estação Desconhecida',
+                        admission_fee: Number(m.admission_fee || 0),
+                        is_leader: m.role === 'leader' || Number(m.founder_pilot_uid) === Number(pilotUid)
+                    }
+                }
+            });
+        }
+
+        // 2. Não possui corporação. Verifica se possui pedido de inscrição pendente
+        const pendingRows = await conn.query(
+            `SELECT 
+                m.date_time,
+                m.uid_destination AS founder_pilot_uid,
+                m.text,
+                p_dest.pilot AS founder_name,
+                c.corporation_uid,
+                c.name AS corporation_name,
+                COALESCE(c.admission_fee, 0) AS admission_fee
+             FROM messages m
+             INNER JOIN corporations c ON c.founder_pilot_uid = m.uid_destination
+             LEFT JOIN pilots p_dest ON p_dest.pilot_uid = m.uid_destination
+             WHERE m.uid_origin = ?
+               AND m.text LIKE '%solicita ser aceito na corporação%'
+               AND NOT EXISTS (
+                 SELECT 1 FROM messages cancel_msg
+                 WHERE cancel_msg.uid_origin = m.uid_origin
+                   AND cancel_msg.uid_destination = m.uid_destination
+                   AND cancel_msg.date_time > m.date_time
+                   AND cancel_msg.text LIKE '%cancelou a solicitação%'
+               )
+             ORDER BY m.date_time DESC
+             LIMIT 1`,
+            [pilotUid]
+        );
+
+        if (pendingRows.length > 0) {
+            const p = pendingRows[0];
+            return res.json({
+                status: 'sucesso',
+                data: {
+                    has_corporation: false,
+                    has_pending_application: true,
+                    pending_application: {
+                        corporation_uid: Number(p.corporation_uid),
+                        corporation_name: p.corporation_name,
+                        founder_pilot_uid: Number(p.founder_pilot_uid),
+                        founder_name: p.founder_name || 'Fundador',
+                        date_time: p.date_time,
+                        admission_fee: Number(p.admission_fee || 0)
+                    }
+                }
+            });
+        }
+
+        // 3. Freelancer sem corporação e sem solicitações pendentes
+        return res.json({
+            status: 'sucesso',
+            data: {
+                has_corporation: false,
+                has_pending_application: false
+            }
+        });
+    } catch (err) {
+        console.error('[Corporation getCorporationStatus Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Lista todas as corporações ativas
+ */
+const getActiveCorporations = async (req, res) => {
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const rows = await conn.query(
+            `SELECT 
+                c.corporation_uid,
+                c.name,
+                c.founder_pilot_uid,
+                COALESCE(p.pilot, 'Comandante') AS founder_name,
+                c.station_uid,
+                COALESCE(st.name, 'Não Definida') AS station_name,
+                COALESCE(c.admission_fee, 0) AS admission_fee,
+                COUNT(cm.pilot_uid) AS members_count,
+                c.created_at
+             FROM corporations c
+             LEFT JOIN pilots p ON p.pilot_uid = c.founder_pilot_uid
+             LEFT JOIN orbit_stations st ON st.id = c.station_uid
+             LEFT JOIN corporation_members cm ON cm.corporation_uid = c.corporation_uid
+             WHERE c.status = 'active'
+             GROUP BY c.corporation_uid
+             ORDER BY c.name ASC`
+        );
+
+        const list = rows.map(r => ({
+            corporation_uid: Number(r.corporation_uid),
+            name: r.name,
+            founder_pilot_uid: Number(r.founder_pilot_uid),
+            founder_name: r.founder_name,
+            station_uid: r.station_uid != null ? Number(r.station_uid) : null,
+            station_name: r.station_name,
+            admission_fee: Number(r.admission_fee || 0),
+            members_count: Number(r.members_count || 0),
+            created_at: r.created_at
+        }));
+
+        return res.json({
+            status: 'sucesso',
+            data: list
+        });
+    } catch (err) {
+        console.error('[Corporation getActiveCorporations Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+module.exports = {
+    getCorporationStatus,
+    getActiveCorporations
+};

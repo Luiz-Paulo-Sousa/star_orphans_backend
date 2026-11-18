@@ -15,6 +15,7 @@ const messageRoutes = require('./routes/messageRoutes');
 const hangarRoutes = require('./routes/hangarRoutes');
 const marketRoutes = require('./routes/marketRoutes');
 const factoryRoutes = require('./routes/factoryRoutes');
+const corporationRoutes = require('./routes/corporationRoutes');
 const messageController = require('./controllers/messageController');
 
 const app = Express();
@@ -109,6 +110,8 @@ app.use('/', marketRoutes);
 app.use('/api', marketRoutes);
 app.use('/', factoryRoutes);
 app.use('/api', factoryRoutes);
+app.use('/', corporationRoutes);
+app.use('/api', corporationRoutes);
 
 // Rota para listar estações da tabela orbit_stations
 app.get(['/api/stations', '/stations', '/api/orbit-stations'], async (req, res) => {
