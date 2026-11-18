@@ -85,6 +85,7 @@ async function ensurePilotStationContext(conn, pilotUid) {
 
     await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (0, 0, 999999999)");
     await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000)", [pilotUid]);
+    await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000000)", [stationId]);
 
     let mktRows = await conn.query(
         "SELECT market_uid FROM markets WHERE orbit = ? AND station = ? LIMIT 1",
@@ -384,18 +385,28 @@ const buyMarketItem = async (req, res) => {
 
         let sellerBefore = 0;
         let sellerAfter = 0;
+        let sellerWalletUid = ownerUid;
+
         if (ownerUid > 0) {
             await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000)", [ownerUid]);
             const sellerW = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE", [ownerUid]);
             sellerBefore = sellerW.length > 0 ? Number(sellerW[0].credits) : 0;
             sellerAfter = sellerBefore + totalCost;
             await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [sellerAfter, ownerUid]);
+        } else {
+            // Compra realizada na estacao comercial: credita a carteira da estacao
+            sellerWalletUid = ctx.station;
+            await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000000)", [ctx.station]);
+            const stationW = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE", [ctx.station]);
+            sellerBefore = stationW.length > 0 ? Number(stationW[0].credits) : 0;
+            sellerAfter = sellerBefore + totalCost;
+            await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [sellerAfter, ctx.station]);
         }
 
         await conn.query(
             `INSERT INTO wallet_transactions (wallet_from, wallet_to, amount, balance_from_before, balance_from_after, balance_to_before, balance_to_after, operation_type, reference_id)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [ctx.pilot_uid, ownerUid, totalCost, buyerBefore, buyerAfter, sellerBefore, sellerAfter, ownerUid > 0 ? 'market_p2p_buy' : 'market_station_buy', item_code]
+            [ctx.pilot_uid, sellerWalletUid, totalCost, buyerBefore, buyerAfter, sellerBefore, sellerAfter, ownerUid > 0 ? 'market_p2p_buy' : 'market_station_buy', item_code]
         );
 
         const newStock = currentStock - qty;
@@ -603,13 +614,23 @@ const sellMarketItem = async (req, res) => {
             [ctx.market_uid, item_code, basePurchasePrice, unitSellPrice, basePurchasePrice, qty]
         );
 
+        // 1. Atualiza a carteira da estacao compradora (wallet_uid = ctx.station)
+        await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000000)", [ctx.station]);
+        const stationW = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE", [ctx.station]);
+        const stationBefore = stationW.length > 0 ? Number(stationW[0].credits) : 1000000000;
+        const stationAfter = stationBefore - totalReceived;
+        await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [stationAfter, ctx.station]);
+
+        // 2. Atualiza a carteira do piloto vendedor
         const balanceBefore = ctx.credits;
         const balanceAfter = balanceBefore + totalReceived;
         await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [balanceAfter, ctx.pilot_uid]);
+
+        // 3. Registra a transacao da estacao para o piloto
         await conn.query(
             `INSERT INTO wallet_transactions (wallet_from, wallet_to, amount, balance_from_before, balance_from_after, balance_to_before, balance_to_after, operation_type, reference_id)
-             VALUES (0, ?, ?, 0, 0, ?, ?, 'market_station_sell', ?)`,
-            [ctx.pilot_uid, totalReceived, balanceBefore, balanceAfter, item_code]
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'market_station_sell', ?)`,
+            [ctx.station, ctx.pilot_uid, totalReceived, stationBefore, stationAfter, balanceBefore, balanceAfter, item_code]
         );
 
         await conn.commit();

@@ -1,5 +1,7 @@
 @echo off
 setlocal EnableDelayedExpansion
+title DEPLOY BACKEND - STAR ORPHANS
+color 0E
 
 echo =======================================================
 echo    STAR ORPHANS - DEPLOY AUTOMATIZADO DO BACKEND
@@ -21,7 +23,8 @@ if exist "%USERPROFILE%\star_orphans_backend\apis\src" (
 )
 
 echo [ERRO] Nao foi possivel encontrar a pasta do backend!
-goto :END
+if "%~1" neq "--no-pause" pause
+exit /b 1
 
 :FOUND
 echo [OK] Pasta local identificada: "%BACKEND_DIR%"
@@ -29,9 +32,18 @@ echo [OK] Pasta local identificada: "%BACKEND_DIR%"
 REM 2. Verificacao do disco Z:
 set "DEST_DIR=Z:\OrphansSolutions"
 if not exist "%DEST_DIR%" (
+    echo [INFO] Tentando conectar unidade de rede Z:...
+    net use Z: \\100.96.189.103\Hyper-V /persistent:yes >nul 2>&1
+)
+if not exist "%DEST_DIR%" (
+    net use Z: \\192.168.15.19\Hyper-V /persistent:yes >nul 2>&1
+)
+if not exist "%DEST_DIR%" (
     echo [ERRO] O disco de rede Z:\OrphansSolutions nao esta acessivel!
-    echo Verifique se a pasta compartilhada do servidor esta mapeada como Z:.
-    goto :END
+    echo Verifique se a pasta compartilhada do servidor esta conectada.
+    echo.
+    if "%~1" neq "--no-pause" pause
+    exit /b 1
 )
 echo [OK] Disco do servidor Z: conectado!
 
@@ -71,7 +83,12 @@ if exist "%TEMP_ASKPASS%" del "%TEMP_ASKPASS%" >nul 2>&1
 echo.
 echo =======================================================
 echo    DEPLOY DO BACKEND CONCLUIDO COM SUCESSO!
+echo    Container apis_novas reiniciado no servidor.
 echo =======================================================
 echo.
 
+if "%~1" neq "--no-pause" (
+    echo Pressione qualquer tecla para fechar esta janela...
+    pause >nul
+)
 :END

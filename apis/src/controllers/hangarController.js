@@ -675,12 +675,19 @@ const repairVessel = async (req, res) => {
             });
         }
 
+        const stationId = Number(vessel.station || pilot.station || 1);
+        await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000000)", [stationId]);
+        const stationW = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE", [stationId]);
+        const stationBefore = stationW.length > 0 ? Number(stationW[0].credits) : 1000000000;
+        const stationAfter = stationBefore + repairCost;
+        await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [stationAfter, stationId]);
+
         const newCredits = currentCredits - repairCost;
         await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [newCredits, pilot_uid]);
         await conn.query(
             `INSERT INTO wallet_transactions (wallet_from, wallet_to, amount, balance_from_before, balance_from_after, balance_to_before, balance_to_after, operation_type, reference_id)
-             VALUES (?, 0, ?, ?, ?, 0, 0, 'vessel_repair', ?)`,
-            [pilot_uid, repairCost, currentCredits, newCredits, vessel_uid]
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'vessel_repair', ?)`,
+            [pilot_uid, stationId, repairCost, currentCredits, newCredits, stationBefore, stationAfter, vessel_uid]
         );
 
         await conn.query(updateSql, [vessel_uid, pilot_uid]);
@@ -1319,10 +1326,24 @@ const equipSlot = async (req, res) => {
                 });
             }
 
-            // Deduz créditos
+            // Deduz créditos do piloto e credita a estação
+            const buyerBefore = currentCredits;
+            const buyerAfter = buyerBefore - unitPrice;
             await conn.query(
-                "UPDATE wallets SET credits = credits - ? WHERE wallet_uid = ?",
-                [unitPrice, pilotUidNum]
+                "UPDATE wallets SET credits = ? WHERE wallet_uid = ?",
+                [buyerAfter, pilotUidNum]
+            );
+
+            await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000000)", [stationId]);
+            const stationW = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE", [stationId]);
+            const stationBefore = stationW.length > 0 ? Number(stationW[0].credits) : 1000000000;
+            const stationAfter = stationBefore + unitPrice;
+            await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [stationAfter, stationId]);
+
+            await conn.query(
+                `INSERT INTO wallet_transactions (wallet_from, wallet_to, amount, balance_from_before, balance_from_after, balance_to_before, balance_to_after, operation_type, reference_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'market_station_buy', ?)`,
+                [pilotUidNum, stationId, unitPrice, buyerBefore, buyerAfter, stationBefore, stationAfter, itemCodeNum]
             );
 
             // Se houver registro no station_warehouse, deduz saldo

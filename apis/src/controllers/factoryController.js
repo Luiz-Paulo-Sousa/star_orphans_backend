@@ -435,9 +435,24 @@ const startCrafting = async (req, res) => {
             }
         }
 
-        // 4. Desconta os créditos da carteira
+        // 4. Desconta os créditos da carteira do piloto e credita a estação
         if (totalCost > 0) {
-            await conn.query("UPDATE wallets SET credits = credits - ? WHERE wallet_uid = ?", [totalCost, pilot_uid]);
+            const pilotW = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE", [pilot_uid]);
+            const buyerBefore = pilotW.length > 0 ? Number(pilotW[0].credits) : 0;
+            const buyerAfter = buyerBefore - totalCost;
+            await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [buyerAfter, pilot_uid]);
+
+            await conn.query("INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000000)", [stationId]);
+            const stationW = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE", [stationId]);
+            const stationBefore = stationW.length > 0 ? Number(stationW[0].credits) : 1000000000;
+            const stationAfter = stationBefore + totalCost;
+            await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [stationAfter, stationId]);
+
+            await conn.query(
+                `INSERT INTO wallet_transactions (wallet_from, wallet_to, amount, balance_from_before, balance_from_after, balance_to_before, balance_to_after, operation_type, reference_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'crafting_order', ?)`,
+                [pilot_uid, stationId, totalCost, buyerBefore, buyerAfter, stationBefore, stationAfter, item_code]
+            );
         }
 
         // 5. Insere a ordem na fila de fabricação com data de entrega calculada
