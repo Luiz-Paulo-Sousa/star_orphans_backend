@@ -13,6 +13,10 @@ const getCorporationStatus = async (req, res) => {
     try {
         conn = await db.getConnection();
 
+        // Busca saldo atual de créditos do piloto para validações financeiras
+        const pilotW = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? LIMIT 1", [pilotUid]);
+        const pilotCredits = pilotW.length > 0 ? Number(pilotW[0].credits) : 0;
+
         // 1. Verifica se o piloto faz parte de alguma corporação
         const memberRows = await conn.query(
             `SELECT 
@@ -41,6 +45,7 @@ const getCorporationStatus = async (req, res) => {
             return res.json({
                 status: 'sucesso',
                 data: {
+                    pilot_credits: pilotCredits,
                     has_corporation: true,
                     corporation: {
                         corporation_uid: Number(m.corporation_uid),
@@ -91,6 +96,7 @@ const getCorporationStatus = async (req, res) => {
             return res.json({
                 status: 'sucesso',
                 data: {
+                    pilot_credits: pilotCredits,
                     has_corporation: false,
                     has_pending_application: true,
                     pending_application: {
@@ -109,6 +115,7 @@ const getCorporationStatus = async (req, res) => {
         return res.json({
             status: 'sucesso',
             data: {
+                pilot_credits: pilotCredits,
                 has_corporation: false,
                 has_pending_application: false
             }
@@ -360,9 +367,223 @@ const cancelApplication = async (req, res) => {
     }
 };
 
+/**
+ * Lista as estações orbitais disponíveis para fundar uma corporação (Passo 4)
+ */
+const getAvailableStations = async (req, res) => {
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const rows = await conn.query(
+            `SELECT 
+                s.id AS station_id,
+                s.name AS station_name,
+                s.orbit_id,
+                COALESCE(o.name, 'Órbita Desconhecida') AS orbit_name
+             FROM orbit_stations s
+             LEFT JOIN orbits o ON o.id = s.orbit_id
+             ORDER BY s.name ASC`
+        );
+
+        const list = rows.map(r => ({
+            station_id: Number(r.station_id),
+            station_name: r.station_name,
+            orbit_id: Number(r.orbit_id),
+            orbit_name: r.orbit_name
+        }));
+
+        return res.json({
+            status: 'sucesso',
+            data: list
+        });
+    } catch (err) {
+        console.error('[Corporation getAvailableStations Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Cria uma nova corporação (Passo 4)
+ * - Taxa de abertura: 1.000.000 créditos
+ * - Valida se o piloto não tem corporação nem pedido pendente
+ * - Valida unicidade do nome
+ * - Valida estação escolhida
+ * - Valida e debita 1.000.000 CR da carteira do piloto
+ * - Credita 1.000.000 CR na carteira da estação
+ * - Registra a transação em wallet_transactions
+ * - Insere na tabela corporations
+ * - Insere o piloto como 'leader' em corporation_members
+ */
+const createCorporation = async (req, res) => {
+    const { pilot_uid, name, station_uid } = req.body;
+    const FOUNDATION_FEE = 1000000;
+
+    if (!pilot_uid) {
+        return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid é obrigatório.' });
+    }
+
+    const trimmedName = (name || '').trim();
+    if (!trimmedName || trimmedName.length < 3 || trimmedName.length > 30) {
+        return res.status(400).json({ status: 'erro', mensagem: 'O nome da corporação deve conter entre 3 e 30 caracteres.' });
+    }
+
+    const parsedStationId = parseInt(station_uid, 10);
+    if (isNaN(parsedStationId) || parsedStationId <= 0) {
+        return res.status(400).json({ status: 'erro', mensagem: 'Selecione uma estação base válida.' });
+    }
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+
+        // 1. Valida se o piloto já pertence a uma corporação
+        const memberRows = await conn.query(
+            "SELECT corporation_uid FROM corporation_members WHERE pilot_uid = ? LIMIT 1",
+            [pilot_uid]
+        );
+        if (memberRows.length > 0) {
+            await conn.rollback();
+            return res.status(400).json({ status: 'erro', mensagem: 'Você já faz parte de uma corporação. É necessário se desligar antes de fundar outra.' });
+        }
+
+        // 2. Valida se possui solicitação de ingresso pendente em outra corporação
+        const pendingRows = await conn.query(
+            `SELECT 1 FROM messages m
+             WHERE m.uid_origin = ?
+               AND m.text LIKE '%solicita ser aceito na corporação%'
+               AND NOT EXISTS (
+                 SELECT 1 FROM messages cancel_msg
+                 WHERE cancel_msg.uid_origin = m.uid_origin
+                   AND cancel_msg.uid_destination = m.uid_destination
+                   AND cancel_msg.date_time > m.date_time
+                   AND cancel_msg.text LIKE '%cancelou a solicitação%'
+               )
+             LIMIT 1`,
+            [pilot_uid]
+        );
+        if (pendingRows.length > 0) {
+            await conn.rollback();
+            return res.status(400).json({ status: 'erro', mensagem: 'Você possui uma solicitação de ingresso pendente. Cancele-a antes de fundar sua própria corporação.' });
+        }
+
+        // 3. Valida se já existe uma corporação com esse nome (case-insensitive)
+        const existingNameRows = await conn.query(
+            "SELECT corporation_uid FROM corporations WHERE LOWER(name) = LOWER(?) LIMIT 1",
+            [trimmedName]
+        );
+        if (existingNameRows.length > 0) {
+            await conn.rollback();
+            return res.status(400).json({ status: 'erro', mensagem: `O nome "${trimmedName}" já está em uso por outra corporação estelar.` });
+        }
+
+        // 4. Valida se a estação existe
+        const stationRows = await conn.query(
+            "SELECT id, name FROM orbit_stations WHERE id = ? LIMIT 1",
+            [parsedStationId]
+        );
+        if (stationRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: 'erro', mensagem: 'Estação base selecionada não encontrada no setor.' });
+        }
+        const stationName = stationRows[0].name;
+
+        // 5. Validação e Débito na carteira do piloto
+        const pilotW = await conn.query(
+            "SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE",
+            [pilot_uid]
+        );
+        const pilotCredits = pilotW.length > 0 ? Number(pilotW[0].credits) : 0;
+        if (pilotCredits < FOUNDATION_FEE) {
+            await conn.rollback();
+            return res.status(400).json({
+                status: 'erro',
+                mensagem: `Créditos insuficientes para fundar a corporação. Taxa necessária: 1.000.000 CR. Saldo atual: ${pilotCredits.toLocaleString('pt-BR')} CR.`
+            });
+        }
+
+        const pilotAfter = pilotCredits - FOUNDATION_FEE;
+        await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [pilotAfter, pilot_uid]);
+
+        // 6. Crédito na carteira da estação
+        await conn.query(
+            "INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000000)",
+            [parsedStationId]
+        );
+        const stationW = await conn.query(
+            "SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE",
+            [parsedStationId]
+        );
+        const stationBefore = stationW.length > 0 ? Number(stationW[0].credits) : 1000000000;
+        const stationAfter = stationBefore + FOUNDATION_FEE;
+        await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [stationAfter, parsedStationId]);
+
+        // 7. Cria o registro da Corporação
+        const corpInsert = await conn.query(
+            `INSERT INTO corporations (name, founder_pilot_uid, status, created_at, station_uid, admission_fee)
+             VALUES (?, ?, 'active', NOW(), ?, 0)`,
+            [trimmedName, pilot_uid, parsedStationId]
+        );
+        const newCorpUid = Number(corpInsert.insertId);
+
+        // 8. Registra o fundador como líder em corporation_members
+        await conn.query(
+            `INSERT INTO corporation_members (corporation_uid, pilot_uid, role, joined_at)
+             VALUES (?, ?, 'leader', NOW())`,
+            [newCorpUid, pilot_uid]
+        );
+
+        // 9. Registra o movimento financeiro em wallet_transactions
+        await conn.query(
+            `INSERT INTO wallet_transactions (
+                wallet_from, wallet_to, amount, 
+                balance_from_before, balance_from_after, 
+                balance_to_before, balance_to_after, 
+                operation_type, reference_id
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'corporation_creation', ?)`,
+            [
+                pilot_uid,
+                parsedStationId,
+                FOUNDATION_FEE,
+                pilotCredits,
+                pilotAfter,
+                stationBefore,
+                stationAfter,
+                newCorpUid
+            ]
+        );
+
+        await conn.commit();
+
+        return res.status(201).json({
+            status: 'sucesso',
+            mensagem: `Corporação "${trimmedName}" fundada com sucesso! Você é o Comandante Líder.`,
+            data: {
+                corporation_uid: newCorpUid,
+                name: trimmedName,
+                role: 'leader',
+                station_uid: parsedStationId,
+                station_name: stationName,
+                founder_pilot_uid: pilot_uid,
+                credits_remaining: pilotAfter
+            }
+        });
+    } catch (err) {
+        if (conn) await conn.rollback();
+        console.error('[Corporation createCorporation Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
 module.exports = {
     getCorporationStatus,
     getActiveCorporations,
     applyToCorporation,
-    cancelApplication
+    cancelApplication,
+    getAvailableStations,
+    createCorporation
 };
