@@ -9,4 +9,14 @@ router.post('/corporation/apply', corporationController.applyToCorporation);
 router.post('/corporation/cancel-application', corporationController.cancelApplication);
 router.post('/corporation/create', corporationController.createCorporation);
 
+// Gestão de Equipes (corporation_teams)
+router.get('/corporation/:corpUid/teams', corporationController.getCorporationTeams);
+router.post('/corporation/:corpUid/teams', corporationController.createCorporationTeam);
+router.delete('/corporation/:corpUid/teams/:teamUid', corporationController.deleteCorporationTeam);
+
+// Gestão de Membros / Admitidos (corporation_members)
+router.get('/corporation/:corpUid/members', corporationController.getCorporationMembers);
+router.patch('/corporation/:corpUid/members/:pilotUid', corporationController.updateCorporationMember);
+router.delete('/corporation/:corpUid/members/:pilotUid', corporationController.removeCorporationMember);
+
 module.exports = router;

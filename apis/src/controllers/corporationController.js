@@ -579,11 +579,264 @@ const createCorporation = async (req, res) => {
     }
 };
 
+/**
+ * Lista todas as equipes de uma corporação (corporation_teams)
+ */
+const getCorporationTeams = async (req, res) => {
+    const corpUid = req.params.corpUid;
+    if (!corpUid) return res.status(400).json({ status: 'erro', mensagem: 'corpUid é obrigatório.' });
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const rows = await conn.query(
+            `SELECT 
+                ct.corporation_uid,
+                ct.team_uid,
+                ct.description,
+                COUNT(cm.pilot_uid) AS members_count
+             FROM corporation_teams ct
+             LEFT JOIN corporation_members cm ON cm.corporation_uid = ct.corporation_uid AND cm.team_uid = ct.team_uid
+             WHERE ct.corporation_uid = ?
+             GROUP BY ct.corporation_uid, ct.team_uid, ct.description
+             ORDER BY ct.team_uid ASC`,
+            [corpUid]
+        );
+        const list = rows.map(r => ({
+            corporation_uid: Number(r.corporation_uid),
+            team_uid: Number(r.team_uid),
+            description: r.description,
+            members_count: Number(r.members_count || 0)
+        }));
+        return res.json({ status: 'sucesso', data: list });
+    } catch (err) {
+        console.error('[getCorporationTeams Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: 'Falha ao buscar equipes.' });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Cria uma nova equipe na tabela corporation_teams
+ */
+const createCorporationTeam = async (req, res) => {
+    const corpUid = req.params.corpUid;
+    const { description } = req.body;
+    if (!corpUid || !description || !description.trim()) {
+        return res.status(400).json({ status: 'erro', mensagem: 'Descrição da equipe é obrigatória.' });
+    }
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const maxRows = await conn.query(
+            "SELECT COALESCE(MAX(team_uid), 0) AS max_id FROM corporation_teams WHERE corporation_uid = ?",
+            [corpUid]
+        );
+        const nextTeamUid = Number(maxRows[0].max_id) + 1;
+        await conn.query(
+            "INSERT INTO corporation_teams (corporation_uid, team_uid, description) VALUES (?, ?, ?)",
+            [corpUid, nextTeamUid, description.trim()]
+        );
+        return res.json({
+            status: 'sucesso',
+            mensagem: 'Equipe criada com sucesso.',
+            data: {
+                corporation_uid: Number(corpUid),
+                team_uid: nextTeamUid,
+                description: description.trim(),
+                members_count: 0
+            }
+        });
+    } catch (err) {
+        console.error('[createCorporationTeam Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: 'Falha ao criar equipe.' });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Exclui uma equipe e desvincula os membros que pertenciam a ela
+ */
+const deleteCorporationTeam = async (req, res) => {
+    const { corpUid, teamUid } = req.params;
+    if (!corpUid || !teamUid) {
+        return res.status(400).json({ status: 'erro', mensagem: 'corpUid e teamUid são obrigatórios.' });
+    }
+    let conn;
+    try {
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+        await conn.query(
+            "UPDATE corporation_members SET team_uid = NULL WHERE corporation_uid = ? AND team_uid = ?",
+            [corpUid, teamUid]
+        );
+        await conn.query(
+            "DELETE FROM corporation_teams WHERE corporation_uid = ? AND team_uid = ?",
+            [corpUid, teamUid]
+        );
+        await conn.commit();
+        return res.json({ status: 'sucesso', mensagem: 'Equipe removida com sucesso.' });
+    } catch (err) {
+        if (conn) await conn.rollback();
+        console.error('[deleteCorporationTeam Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: 'Falha ao remover equipe.' });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Lista todos os membros admitidos de uma corporação
+ */
+const getCorporationMembers = async (req, res) => {
+    const corpUid = req.params.corpUid;
+    if (!corpUid) return res.status(400).json({ status: 'erro', mensagem: 'corpUid é obrigatório.' });
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const rows = await conn.query(
+            `SELECT 
+                cm.corporation_uid,
+                cm.pilot_uid,
+                cm.role,
+                cm.joined_at,
+                cm.team_uid,
+                COALESCE(ct.description, 'Sem Equipe') AS team_name,
+                COALESCE(p.pilot, 'Desconhecido') AS pilot_name,
+                c.founder_pilot_uid,
+                (c.founder_pilot_uid = cm.pilot_uid) AS is_founder
+             FROM corporation_members cm
+             INNER JOIN corporations c ON c.corporation_uid = cm.corporation_uid
+             LEFT JOIN pilots p ON p.pilot_uid = cm.pilot_uid
+             LEFT JOIN corporation_teams ct ON ct.corporation_uid = cm.corporation_uid AND ct.team_uid = cm.team_uid
+             WHERE cm.corporation_uid = ?
+             ORDER BY 
+                CASE cm.role 
+                    WHEN 'leader' THEN 1 
+                    WHEN 'officer' THEN 2 
+                    WHEN 'member' THEN 3 
+                    ELSE 4 
+                END, 
+                cm.joined_at ASC`,
+            [corpUid]
+        );
+        return res.json({ status: 'sucesso', data: rows });
+    } catch (err) {
+        console.error('[getCorporationMembers Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: 'Falha ao buscar membros.' });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Atualiza cargo (role) e/ou equipe (team_uid) de um membro admitido
+ */
+const updateCorporationMember = async (req, res) => {
+    const { corpUid, pilotUid } = req.params;
+    const { role, team_uid } = req.body;
+    if (!corpUid || !pilotUid) {
+        return res.status(400).json({ status: 'erro', mensagem: 'corpUid e pilotUid são obrigatórios.' });
+    }
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const updates = [];
+        const params = [];
+
+        if (role !== undefined) {
+            const validRoles = ['leader', 'officer', 'member'];
+            if (!validRoles.includes(role)) {
+                return res.status(400).json({ status: 'erro', mensagem: 'Cargo inválido. Opções: leader, officer, member.' });
+            }
+            updates.push("role = ?");
+            params.push(role);
+        }
+
+        if (team_uid !== undefined) {
+            if (team_uid === null || team_uid === '' || team_uid === 0 || team_uid === 'none') {
+                updates.push("team_uid = NULL");
+            } else {
+                const teamCheck = await conn.query(
+                    "SELECT team_uid FROM corporation_teams WHERE corporation_uid = ? AND team_uid = ? LIMIT 1",
+                    [corpUid, team_uid]
+                );
+                if (teamCheck.length === 0) {
+                    return res.status(404).json({ status: 'erro', mensagem: 'Equipe não encontrada para esta corporação.' });
+                }
+                updates.push("team_uid = ?");
+                params.push(Number(team_uid));
+            }
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ status: 'erro', mensagem: 'Nenhum campo para atualizar.' });
+        }
+
+        params.push(corpUid, pilotUid);
+        await conn.query(
+            `UPDATE corporation_members SET ${updates.join(', ')} WHERE corporation_uid = ? AND pilot_uid = ?`,
+            params
+        );
+
+        return res.json({ status: 'sucesso', mensagem: 'Membro atualizado com sucesso.' });
+    } catch (err) {
+        console.error('[updateCorporationMember Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: 'Falha ao atualizar membro.' });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Desliga (exclui) um admitido da corporação
+ */
+const removeCorporationMember = async (req, res) => {
+    const { corpUid, pilotUid } = req.params;
+    if (!corpUid || !pilotUid) {
+        return res.status(400).json({ status: 'erro', mensagem: 'corpUid e pilotUid são obrigatórios.' });
+    }
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const corpRows = await conn.query(
+            "SELECT founder_pilot_uid FROM corporations WHERE corporation_uid = ? LIMIT 1",
+            [corpUid]
+        );
+        if (corpRows.length > 0 && Number(corpRows[0].founder_pilot_uid) === Number(pilotUid)) {
+            return res.status(400).json({ status: 'erro', mensagem: 'Não é possível desligar o líder fundador da corporação.' });
+        }
+
+        const result = await conn.query(
+            "DELETE FROM corporation_members WHERE corporation_uid = ? AND pilot_uid = ?",
+            [corpUid, pilotUid]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ status: 'erro', mensagem: 'Membro não encontrado nesta corporação.' });
+        }
+
+        return res.json({ status: 'sucesso', mensagem: 'Piloto desligado da corporação com sucesso.' });
+    } catch (err) {
+        console.error('[removeCorporationMember Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: 'Falha ao desligar membro.' });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
 module.exports = {
     getCorporationStatus,
     getActiveCorporations,
     applyToCorporation,
     cancelApplication,
     getAvailableStations,
-    createCorporation
+    createCorporation,
+    getCorporationTeams,
+    createCorporationTeam,
+    deleteCorporationTeam,
+    getCorporationMembers,
+    updateCorporationMember,
+    removeCorporationMember
 };
