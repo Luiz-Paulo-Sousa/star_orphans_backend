@@ -17,6 +17,8 @@ router.delete('/corporation/:corpUid/teams/:teamUid', corporationController.dele
 // Gestão de Membros / Admitidos (corporation_members)
 router.get('/corporation/:corpUid/members', corporationController.getCorporationMembers);
 router.patch('/corporation/:corpUid/members/:pilotUid', corporationController.updateCorporationMember);
+router.post('/corporation/:corpUid/members/:pilotUid', corporationController.updateCorporationMember);
+router.put('/corporation/:corpUid/members/:pilotUid', corporationController.updateCorporationMember);
 router.delete('/corporation/:corpUid/members/:pilotUid', corporationController.removeCorporationMember);
 
 module.exports = router;
