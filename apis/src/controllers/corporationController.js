@@ -17,6 +17,17 @@ const getCorporationStatus = async (req, res) => {
         const pilotW = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? LIMIT 1", [pilotUid]);
         const pilotCredits = pilotW.length > 0 ? Number(pilotW[0].credits) : 0;
 
+        // Busca localização atual do piloto (estação e órbita)
+        const pilotStationRows = await conn.query(
+            `SELECT p.station, p.orbit, st.name AS station_name 
+             FROM pilots p 
+             LEFT JOIN orbit_stations st ON st.id = p.station 
+             WHERE p.pilot_uid = ? LIMIT 1`,
+            [pilotUid]
+        );
+        const pilotStationId = pilotStationRows.length > 0 && pilotStationRows[0].station != null ? Number(pilotStationRows[0].station) : null;
+        const pilotStationName = pilotStationRows.length > 0 && pilotStationRows[0].station_name ? pilotStationRows[0].station_name : 'Desconhecida';
+
         // 1. Verifica se o piloto faz parte de alguma corporaÃ§Ã£o
         const memberRows = await conn.query(
             `SELECT 
@@ -29,6 +40,7 @@ const getCorporationStatus = async (req, res) => {
                 c.founder_pilot_uid,
                 c.station_uid,
                 COALESCE(c.admission_fee, 0) AS admission_fee,
+                COALESCE(c.credits, 0) AS corporation_credits,
                 st.name AS station_name,
                 p_founder.pilot AS founder_name
              FROM corporation_members cm
@@ -42,10 +54,15 @@ const getCorporationStatus = async (req, res) => {
 
         if (memberRows.length > 0) {
             const m = memberRows[0];
+            const isLeader = m.role === 'leader' || Number(m.founder_pilot_uid) === Number(pilotUid);
+            const isOfficer = m.role === 'officer';
+            const isLeaderOrOfficer = isLeader || isOfficer;
             return res.json({
                 status: 'sucesso',
                 data: {
                     pilot_credits: pilotCredits,
+                    pilot_station_id: pilotStationId,
+                    pilot_station_name: pilotStationName,
                     has_corporation: true,
                     corporation: {
                         corporation_uid: Number(m.corporation_uid),
@@ -58,6 +75,8 @@ const getCorporationStatus = async (req, res) => {
                         station_uid: m.station_uid != null ? Number(m.station_uid) : null,
                         station_name: m.station_name || 'EstaÃ§Ã£o Desconhecida',
                         admission_fee: Number(m.admission_fee || 0),
+                        credits: isLeaderOrOfficer ? Number(m.corporation_credits || 0) : null,
+                        is_leader_or_officer: isLeaderOrOfficer,
                         is_leader: m.role === 'leader' || Number(m.founder_pilot_uid) === Number(pilotUid)
                     }
                 }
@@ -97,6 +116,8 @@ const getCorporationStatus = async (req, res) => {
                 status: 'sucesso',
                 data: {
                     pilot_credits: pilotCredits,
+                    pilot_station_id: pilotStationId,
+                    pilot_station_name: pilotStationName,
                     has_corporation: false,
                     has_pending_application: true,
                     pending_application: {
@@ -144,6 +165,7 @@ const getActiveCorporations = async (req, res) => {
                 c.station_uid,
                 COALESCE(st.name, 'NÃ£o Definida') AS station_name,
                 COALESCE(c.admission_fee, 0) AS admission_fee,
+                COALESCE(c.credits, 0) AS corporation_credits,
                 COUNT(cm.pilot_uid) AS members_count,
                 c.created_at
              FROM corporations c
@@ -496,6 +518,17 @@ const createCorporation = async (req, res) => {
             [pilot_uid]
         );
         const pilotCredits = pilotW.length > 0 ? Number(pilotW[0].credits) : 0;
+
+        // Busca localização atual do piloto (estação e órbita)
+        const pilotStationRows = await conn.query(
+            `SELECT p.station, p.orbit, st.name AS station_name 
+             FROM pilots p 
+             LEFT JOIN orbit_stations st ON st.id = p.station 
+             WHERE p.pilot_uid = ? LIMIT 1`,
+            [pilotUid]
+        );
+        const pilotStationId = pilotStationRows.length > 0 && pilotStationRows[0].station != null ? Number(pilotStationRows[0].station) : null;
+        const pilotStationName = pilotStationRows.length > 0 && pilotStationRows[0].station_name ? pilotStationRows[0].station_name : 'Desconhecida';
         if (pilotCredits < FOUNDATION_FEE) {
             await conn.rollback();
             return res.status(400).json({
@@ -1161,6 +1194,17 @@ const transferCorporationItem = async (req, res) => {
         const founderUid = Number(corp.founder_pilot_uid);
         const corpStationId = Number(corp.station_uid || 1);
 
+        // Validação da Estação Base da Corporação: transações de itens só ocorrem localmente na estação base
+        const opStationRows = await conn.query("SELECT station FROM pilots WHERE pilot_uid = ? LIMIT 1", [operatorUid]);
+        const opCurrentStation = opStationRows.length > 0 && opStationRows[0].station != null ? Number(opStationRows[0].station) : null;
+        if (opCurrentStation !== corpStationId) {
+            await conn.rollback();
+            return res.status(400).json({
+                status: 'erro',
+                mensagem: 'Transações de itens só podem ser realizadas localmente na estação base da corporação.'
+            });
+        }
+
         // Validação de permissões: apenas Líder e Oficiais podem transferir itens da corporação para membros
         if (direction === 'TO_MEMBER') {
             const opMemberRows = await conn.query(
@@ -1538,6 +1582,275 @@ const getCorporationItemTransactions = async (req, res) => {
     }
 };
 
+/**
+ * Transfere créditos entre a corporação e o piloto / membro
+ * - TO_CORPORATION: Jogador doa créditos da sua própria carteira para a corporação
+ * - TO_MEMBER: Líder ou Oficial transfere créditos do caixa da corporação para a carteira de um membro
+ */
+const transferCorporationCredits = async (req, res) => {
+    const { corpUid } = req.params;
+    const { operator_pilot_uid, pilot_uid, amount, direction } = req.body;
+
+    if (!corpUid || !operator_pilot_uid || !pilot_uid || !amount || !direction) {
+        return res.status(400).json({
+            status: 'erro',
+            mensagem: 'corpUid, operator_pilot_uid, pilot_uid, amount e direction são obrigatórios.'
+        });
+    }
+
+    const transferAmount = Number(amount);
+    if (isNaN(transferAmount) || transferAmount <= 0) {
+        return res.status(400).json({
+            status: 'erro',
+            mensagem: 'Informe uma quantidade de créditos válida maior que zero.'
+        });
+    }
+
+    if (direction !== 'TO_CORPORATION' && direction !== 'TO_MEMBER') {
+        return res.status(400).json({
+            status: 'erro',
+            mensagem: "Direção inválida. Utilize 'TO_CORPORATION' ou 'TO_MEMBER'."
+        });
+    }
+
+    const operatorUid = Number(operator_pilot_uid);
+    const memberUid = Number(pilot_uid);
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+
+        // 1. Carrega dados da corporação
+        const corpRows = await conn.query(
+            "SELECT corporation_uid, name, founder_pilot_uid, COALESCE(credits, 0) AS credits FROM corporations WHERE corporation_uid = ? LIMIT 1 FOR UPDATE",
+            [corpUid]
+        );
+        if (corpRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: 'erro', mensagem: 'Corporação não encontrada.' });
+        }
+        const corp = corpRows[0];
+        const founderUid = Number(corp.founder_pilot_uid);
+        let corpCredits = Number(corp.credits || 0);
+
+        // 2. Validações e operações específicas por direção
+        if (direction === 'TO_CORPORATION') {
+            // Regra: apenas o próprio membro pode doar da sua carteira para a corporação
+            if (operatorUid !== memberUid) {
+                await conn.rollback();
+                return res.status(403).json({
+                    status: 'erro',
+                    mensagem: 'Você só pode doar créditos da sua própria carteira para a corporação.'
+                });
+            }
+
+            // Verifica saldo do piloto na tabela wallets
+            const walletRows = await conn.query(
+                "SELECT credits FROM wallets WHERE wallet_uid = ? LIMIT 1 FOR UPDATE",
+                [operatorUid]
+            );
+            if (walletRows.length === 0) {
+                await conn.rollback();
+                return res.status(400).json({
+                    status: 'erro',
+                    mensagem: 'Carteira do piloto não encontrada.'
+                });
+            }
+            const pilotCredits = Number(walletRows[0].credits || 0);
+            if (pilotCredits < transferAmount) {
+                await conn.rollback();
+                return res.status(400).json({
+                    status: 'erro',
+                    mensagem: `Saldo insuficiente na sua carteira (disponível: ${pilotCredits.toLocaleString('pt-BR')} CR).`
+                });
+            }
+
+            // Executa transferência
+            await conn.query("UPDATE wallets SET credits = credits - ? WHERE wallet_uid = ?", [transferAmount, operatorUid]);
+            await conn.query("UPDATE corporations SET credits = COALESCE(credits, 0) + ? WHERE corporation_uid = ?", [transferAmount, corpUid]);
+
+            corpCredits += transferAmount;
+
+            // Registra histórico
+            await conn.query(
+                `INSERT INTO corporation_credit_transactions 
+                 (corporation_uid, pilot_uid, operator_pilot_uid, amount, direction, description)
+                 VALUES (?, ?, ?, ?, 'TO_CORPORATION', ?)`,
+                [corpUid, memberUid, operatorUid, transferAmount, 'Doação de créditos para a corporação']
+            );
+
+        } else if (direction === 'TO_MEMBER') {
+            // Regra: apenas Líder ou Oficial pode transferir para membros
+            const opMemberRows = await conn.query(
+                "SELECT role FROM corporation_members WHERE corporation_uid = ? AND pilot_uid = ? LIMIT 1",
+                [corpUid, operatorUid]
+            );
+            const isFounder = operatorUid === founderUid;
+            const opRole = opMemberRows.length > 0 ? String(opMemberRows[0].role).toLowerCase() : '';
+            const canManage = isFounder || opRole === 'leader' || opRole === 'officer';
+            if (!canManage) {
+                await conn.rollback();
+                return res.status(403).json({
+                    status: 'erro',
+                    mensagem: 'Apenas o Líder e Oficiais podem transferir créditos da corporação para membros.'
+                });
+            }
+
+            // Verifica se a corporação possui créditos suficientes
+            if (corpCredits < transferAmount) {
+                await conn.rollback();
+                return res.status(400).json({
+                    status: 'erro',
+                    mensagem: `Saldo de créditos insuficiente no caixa da corporação (disponível: ${corpCredits.toLocaleString('pt-BR')} CR).`
+                });
+            }
+
+            // Verifica se o piloto de destino pertence à corporação
+            const targetMember = await conn.query(
+                "SELECT pilot_uid FROM corporation_members WHERE corporation_uid = ? AND pilot_uid = ? LIMIT 1",
+                [corpUid, memberUid]
+            );
+            if (targetMember.length === 0) {
+                await conn.rollback();
+                return res.status(400).json({
+                    status: 'erro',
+                    mensagem: 'O piloto selecionado não é membro ativo desta corporação.'
+                });
+            }
+
+            // Garante que a carteira do membro exista
+            await conn.query(
+                "INSERT INTO wallets (wallet_uid, credits) VALUES (?, 0) ON DUPLICATE KEY UPDATE wallet_uid = wallet_uid",
+                [memberUid]
+            );
+
+            // Executa transferência
+            await conn.query("UPDATE corporations SET credits = credits - ? WHERE corporation_uid = ?", [transferAmount, corpUid]);
+            await conn.query("UPDATE wallets SET credits = credits + ? WHERE wallet_uid = ?", [transferAmount, memberUid]);
+
+            corpCredits -= transferAmount;
+
+            // Registra histórico
+            await conn.query(
+                `INSERT INTO corporation_credit_transactions 
+                 (corporation_uid, pilot_uid, operator_pilot_uid, amount, direction, description)
+                 VALUES (?, ?, ?, ?, 'TO_MEMBER', ?)`,
+                [corpUid, memberUid, operatorUid, transferAmount, 'Transferência de créditos corporativos para membro']
+            );
+        }
+
+        await conn.commit();
+
+        // Consulta saldo atualizado do operador
+        const opWalletAfter = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? LIMIT 1", [operatorUid]);
+        const updatedOperatorCredits = opWalletAfter.length > 0 ? Number(opWalletAfter[0].credits) : 0;
+
+        return res.json({
+            status: 'sucesso',
+            mensagem: direction === 'TO_CORPORATION'
+                ? `Você doou ${transferAmount.toLocaleString('pt-BR')} CR para a corporação com sucesso.`
+                : `${transferAmount.toLocaleString('pt-BR')} CR transferidos para o membro com sucesso.`,
+            data: {
+                corporation_credits: corpCredits,
+                operator_credits: updatedOperatorCredits
+            }
+        });
+
+    } catch (err) {
+        if (conn) await conn.rollback();
+        console.error('[transferCorporationCredits Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Consulta histórico de transações financeiras de créditos da corporação
+ */
+const getCorporationCreditTransactions = async (req, res) => {
+    const { corpUid } = req.params;
+    const callerPilotUid = req.query.pilot_uid || req.query.caller_pilot_uid;
+
+    if (!corpUid) {
+        return res.status(400).json({ status: 'erro', mensagem: 'corpUid é obrigatório.' });
+    }
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+
+        // Determina se o chamador é líder ou oficial
+        let isLeaderOrOfficer = false;
+        if (callerPilotUid) {
+            const roleRows = await conn.query(
+                `SELECT cm.role, c.founder_pilot_uid 
+                 FROM corporation_members cm
+                 INNER JOIN corporations c ON c.corporation_uid = cm.corporation_uid
+                 WHERE cm.corporation_uid = ? AND cm.pilot_uid = ? LIMIT 1`,
+                [corpUid, callerPilotUid]
+            );
+            if (roleRows.length > 0) {
+                const r = roleRows[0];
+                if (r.role === 'leader' || r.role === 'officer' || Number(r.founder_pilot_uid) === Number(callerPilotUid)) {
+                    isLeaderOrOfficer = true;
+                }
+            }
+        }
+
+        let whereClause = "cct.corporation_uid = ?";
+        const params = [corpUid];
+
+        // Membro comum só pode ver transações feitas por ele ou para ele
+        if (!isLeaderOrOfficer && callerPilotUid) {
+            whereClause += " AND (cct.pilot_uid = ? OR cct.operator_pilot_uid = ?)";
+            params.push(callerPilotUid, callerPilotUid);
+        }
+
+        const rows = await conn.query(
+            `SELECT 
+                cct.transaction_uid,
+                cct.corporation_uid,
+                cct.pilot_uid,
+                COALESCE(p_target.pilot, 'Piloto Desconhecido') AS pilot_name,
+                cct.operator_pilot_uid,
+                COALESCE(p_op.pilot, 'Operador') AS operator_name,
+                cct.amount,
+                cct.direction,
+                cct.description,
+                cct.created_at
+             FROM corporation_credit_transactions cct
+             LEFT JOIN pilots p_target ON p_target.pilot_uid = cct.pilot_uid
+             LEFT JOIN pilots p_op ON p_op.pilot_uid = cct.operator_pilot_uid
+             WHERE ${whereClause}
+             ORDER BY cct.transaction_uid DESC
+             LIMIT 100`,
+            params
+        );
+
+        const transactions = rows.map(r => ({
+            transaction_uid: Number(r.transaction_uid),
+            corporation_uid: Number(r.corporation_uid),
+            pilot_uid: Number(r.pilot_uid),
+            pilot_name: r.pilot_name,
+            operator_pilot_uid: Number(r.operator_pilot_uid),
+            operator_name: r.operator_name,
+            amount: Number(r.amount),
+            direction: r.direction,
+            description: r.description || (r.direction === 'TO_CORPORATION' ? 'Doação para corporação' : 'Transferência para membro'),
+            created_at: r.created_at
+        }));
+
+        return res.json({ status: 'sucesso', data: transactions });
+    } catch (err) {
+        console.error('[getCorporationCreditTransactions Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
 module.exports = {
     getCorporationStatus,
     getActiveCorporations,
@@ -1554,6 +1867,8 @@ module.exports = {
     getCorporationItems,
     getCorporationMemberHangar,
     transferCorporationItem,
-    getCorporationItemTransactions
+    getCorporationItemTransactions,
+    transferCorporationCredits,
+    getCorporationCreditTransactions
 };
 

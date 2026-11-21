@@ -27,5 +27,9 @@ router.get('/corporation/:corpUid/member-hangar/:pilotUid', corporationControlle
 router.post('/corporation/:corpUid/transfer-item', corporationController.transferCorporationItem);
 router.get('/corporation/:corpUid/item-transactions', corporationController.getCorporationItemTransactions);
 
+// Movimentação Financeira e Créditos da Corporação
+router.post('/corporation/:corpUid/transfer-credits', corporationController.transferCorporationCredits);
+router.get('/corporation/:corpUid/credit-transactions', corporationController.getCorporationCreditTransactions);
+
 module.exports = router;
 
