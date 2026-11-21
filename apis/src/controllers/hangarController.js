@@ -182,13 +182,11 @@ const getPilotFleet = async (req, res) => {
                 COALESCE(i.name, CONCAT('Nave #', v.vessel_uid)) AS vessel_name,
                 COALESCE(i.volume, 0) AS cargo_capacity,
                 COALESCE(i.price, 250000) AS base_price,
-                ii.image_2d_url,
-                ii.image_3d_url,
+                i.image,
                 s.name AS orbit_name,
                 st.name AS station_name
             FROM vessels v
             LEFT JOIN items i ON i.item_code = v.item_code
-            LEFT JOIN item_images ii ON ii.item_code = v.item_code
             LEFT JOIN orbits s ON s.id = v.orbit
             LEFT JOIN orbit_stations st ON st.id = v.station
             WHERE v.pilot_uid = ?`;
@@ -230,7 +228,7 @@ const getPilotFleet = async (req, res) => {
                     ve.amount,
                     i.name,
                     i.item_type,
-                    COALESCE(ii.image_2d_url, i.image) AS image_url,
+                    i.image AS image_url,
                     ws.damage_per_second,
                     ws.energy_consumption AS weapon_energy,
                     ws.fire_range,
@@ -244,7 +242,6 @@ const getPilotFleet = async (req, res) => {
                     us.effect_value AS utility_effect_value
                 FROM vessel_equipments ve
                 INNER JOIN items i ON i.item_code = ve.item_code
-                LEFT JOIN item_images ii ON ii.item_code = ve.item_code
                 LEFT JOIN weapon_specs ws ON ws.item_code = ve.item_code
                 LEFT JOIN device_specs ds ON ds.item_code = ve.item_code
                 LEFT JOIN vessel_modules vm ON vm.module_uid = ds.target_module_uid
@@ -290,7 +287,7 @@ const getPilotFleet = async (req, res) => {
                 i.name,
                 i.price AS catalog_price,
                 i.volume,
-                COALESCE(ii.image_2d_url, i.image) AS image_url,
+                i.image AS image_url,
                 it.type AS type_name,
                 ig.name AS group_name,
                 ws.damage_per_second,
@@ -311,7 +308,6 @@ const getPilotFleet = async (req, res) => {
                 COALESCE(sw.stock_balance, mi.stock, 10) AS market_stock,
                 COALESCE(mi.selling_price, i.price, 10000) AS buy_price
             FROM items i
-            LEFT JOIN item_images ii ON ii.item_code = i.item_code
             LEFT JOIN item_types it ON it.type_code = i.item_type
             LEFT JOIN item_groups ig ON ig.group_code = i.group_code
             LEFT JOIN weapon_specs ws ON ws.item_code = i.item_code
@@ -430,8 +426,8 @@ const getPilotFleet = async (req, res) => {
             const repairCost = Math.round(basePrice * (damagePercent / 100.0));
 
             let hologramUrl = null;
-            if (row.image_2d_url && String(row.image_2d_url).trim() !== '') {
-                const rawPath = String(row.image_2d_url).trim();
+            if (row.image && String(row.image).trim() !== '') {
+                const rawPath = String(row.image).trim();
                 if (rawPath.startsWith('http://') || rawPath.startsWith('https://')) {
                     hologramUrl = rawPath;
                 } else {
@@ -489,7 +485,7 @@ const getPilotFleet = async (req, res) => {
                 integrity: avgIntegrity,
                 hull_integrity: integrity,
                 hologram_url: hologramUrl,
-                image_3d_url: row.image_3d_url || null,
+                image_3d_url: null,
                 hardpoints,
                 stats,
                 subsystems: [
@@ -773,14 +769,12 @@ const getHangarInventory = async (req, res) => {
         if (isAllStations) {
             stationSlotRows = await conn.query(
                 `SELECT cs.item_code, SUM(cs.amount) AS amount,
-                        i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image,
-                        ii.image_2d_url, ii.image_3d_url
+                        i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image
                  FROM containers c
                  INNER JOIN container_slots cs ON cs.container_uid = c.container_uid
                  INNER JOIN items i ON i.item_code = cs.item_code
-                 LEFT JOIN item_images ii ON ii.item_code = i.item_code
                  WHERE c.owner = ? AND c.type = 'hangar' AND cs.amount > 0
-                 GROUP BY cs.item_code
+                 GROUP BY cs.item_code, i.name, i.item_type, i.volume, i.image
                  ORDER BY i.item_type ASC, i.name ASC`,
                 [pilotUid]
             );
@@ -804,11 +798,9 @@ const getHangarInventory = async (req, res) => {
 
             stationSlotRows = await conn.query(
                 `SELECT cs.slot, cs.item_code, cs.amount,
-                        i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image,
-                        ii.image_2d_url, ii.image_3d_url
+                        i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image
                  FROM container_slots cs
                  INNER JOIN items i ON i.item_code = cs.item_code
-                 LEFT JOIN item_images ii ON ii.item_code = i.item_code
                  WHERE cs.container_uid = ? AND cs.amount > 0
                  ORDER BY i.item_type ASC, i.name ASC`,
                 [stationContainerUid]
@@ -822,9 +814,14 @@ const getHangarInventory = async (req, res) => {
             const totalVol = amount * unitVol;
             stationUsedVol += totalVol;
 
-            let img = r.image_2d_url || r.image || null;
-            if (img && !img.startsWith('http') && !img.startsWith('/')) {
-                img = `/items/${img}`;
+            let img = r.image || null;
+            if (img && typeof img === 'string') {
+                if (img.toLowerCase().endsWith('.svg')) {
+                    img = img.replace(/\.svg$/i, '.png');
+                }
+                if (!img.startsWith('http') && !img.startsWith('/')) {
+                    img = `/items/${img}`;
+                }
             }
 
             return {
@@ -850,10 +847,9 @@ const getHangarInventory = async (req, res) => {
                    st.name AS station_name,
                    COALESCE(i.name, CONCAT('Nave #', v.vessel_uid)) AS vessel_name,
                    COALESCE(i.volume, 1000) AS ship_volume,
-                   ii.image_2d_url, ii.image_3d_url
+                   i.image
             FROM vessels v
             LEFT JOIN items i ON i.item_code = v.item_code
-            LEFT JOIN item_images ii ON ii.item_code = v.item_code
             LEFT JOIN orbit_stations st ON st.id = v.station
             WHERE v.pilot_uid = ?
         `;
@@ -891,11 +887,9 @@ const getHangarInventory = async (req, res) => {
 
             const cargoSlotRows = await conn.query(
                 `SELECT cs.slot, cs.item_code, cs.amount,
-                        i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image,
-                        ii.image_2d_url, ii.image_3d_url
+                        i.name, i.item_type, COALESCE(i.volume, 1) AS volume, i.image
                  FROM container_slots cs
                  INNER JOIN items i ON i.item_code = cs.item_code
-                 LEFT JOIN item_images ii ON ii.item_code = i.item_code
                  WHERE cs.container_uid = ? AND cs.amount > 0
                  ORDER BY i.item_type ASC, i.name ASC`,
                 [cargoContUid]
@@ -908,9 +902,14 @@ const getHangarInventory = async (req, res) => {
                 const tVol = amount * uVol;
                 cargoUsedVol += tVol;
 
-                let cImg = cr.image_2d_url || cr.image || null;
-                if (cImg && !cImg.startsWith('http') && !cImg.startsWith('/')) {
-                    cImg = `/items/${cImg}`;
+                let cImg = cr.image || null;
+                if (cImg && typeof cImg === 'string') {
+                    if (cImg.toLowerCase().endsWith('.svg')) {
+                        cImg = cImg.replace(/\.svg$/i, '.png');
+                    }
+                    if (!cImg.startsWith('http') && !cImg.startsWith('/')) {
+                        cImg = `/items/${cImg}`;
+                    }
                 }
 
                 return {
@@ -930,8 +929,8 @@ const getHangarInventory = async (req, res) => {
             }
 
             let holoUrl = null;
-            if (v.image_2d_url && String(v.image_2d_url).trim() !== '') {
-                const rawPath = String(v.image_2d_url).trim();
+            if (v.image && String(v.image).trim() !== '') {
+                const rawPath = String(v.image).trim();
                 if (rawPath.startsWith('http://') || rawPath.startsWith('https://')) {
                     holoUrl = rawPath;
                 } else {

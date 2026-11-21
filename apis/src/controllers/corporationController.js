@@ -1,23 +1,23 @@
-const db = require('../config/database');
+﻿const db = require('../config/database');
 
 /**
- * Consulta o status de corporação do piloto
+ * Consulta o status de corporaÃ§Ã£o do piloto
  */
 const getCorporationStatus = async (req, res) => {
     const pilotUid = req.params.pilotUid || req.query.pilot_uid;
     if (!pilotUid) {
-        return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid é obrigatório.' });
+        return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid Ã© obrigatÃ³rio.' });
     }
 
     let conn;
     try {
         conn = await db.getConnection();
 
-        // Busca saldo atual de créditos do piloto para validações financeiras
+        // Busca saldo atual de crÃ©ditos do piloto para validaÃ§Ãµes financeiras
         const pilotW = await conn.query("SELECT credits FROM wallets WHERE wallet_uid = ? LIMIT 1", [pilotUid]);
         const pilotCredits = pilotW.length > 0 ? Number(pilotW[0].credits) : 0;
 
-        // 1. Verifica se o piloto faz parte de alguma corporação
+        // 1. Verifica se o piloto faz parte de alguma corporaÃ§Ã£o
         const memberRows = await conn.query(
             `SELECT 
                 cm.corporation_uid,
@@ -56,7 +56,7 @@ const getCorporationStatus = async (req, res) => {
                         founder_pilot_uid: Number(m.founder_pilot_uid),
                         founder_name: m.founder_name || 'Desconhecido',
                         station_uid: m.station_uid != null ? Number(m.station_uid) : null,
-                        station_name: m.station_name || 'Estação Desconhecida',
+                        station_name: m.station_name || 'EstaÃ§Ã£o Desconhecida',
                         admission_fee: Number(m.admission_fee || 0),
                         is_leader: m.role === 'leader' || Number(m.founder_pilot_uid) === Number(pilotUid)
                     }
@@ -64,7 +64,7 @@ const getCorporationStatus = async (req, res) => {
             });
         }
 
-        // 2. Não possui corporação. Verifica se possui pedido de inscrição pendente
+        // 2. NÃ£o possui corporaÃ§Ã£o. Verifica se possui pedido de inscriÃ§Ã£o pendente
         const pendingRows = await conn.query(
             `SELECT 
                 m.date_time,
@@ -78,13 +78,13 @@ const getCorporationStatus = async (req, res) => {
              INNER JOIN corporations c ON c.founder_pilot_uid = m.uid_destination
              LEFT JOIN pilots p_dest ON p_dest.pilot_uid = m.uid_destination
              WHERE m.uid_origin = ?
-               AND m.text LIKE '%solicita ser aceito na corporação%'
+               AND m.text LIKE '%solicita ser aceito na corporaÃ§Ã£o%'
                AND NOT EXISTS (
                  SELECT 1 FROM messages cancel_msg
                  WHERE cancel_msg.uid_origin = m.uid_origin
                    AND cancel_msg.uid_destination = m.uid_destination
                    AND cancel_msg.date_time > m.date_time
-                   AND cancel_msg.text LIKE '%cancelou a solicitação%'
+                   AND cancel_msg.text LIKE '%cancelou a solicitaÃ§Ã£o%'
                )
              ORDER BY m.date_time DESC
              LIMIT 1`,
@@ -111,7 +111,7 @@ const getCorporationStatus = async (req, res) => {
             });
         }
 
-        // 3. Freelancer sem corporação e sem solicitações pendentes
+        // 3. Freelancer sem corporaÃ§Ã£o e sem solicitaÃ§Ãµes pendentes
         return res.json({
             status: 'sucesso',
             data: {
@@ -129,7 +129,7 @@ const getCorporationStatus = async (req, res) => {
 };
 
 /**
- * Lista todas as corporações ativas
+ * Lista todas as corporaÃ§Ãµes ativas
  */
 const getActiveCorporations = async (req, res) => {
     let conn;
@@ -142,7 +142,7 @@ const getActiveCorporations = async (req, res) => {
                 c.founder_pilot_uid,
                 COALESCE(p.pilot, 'Comandante') AS founder_name,
                 c.station_uid,
-                COALESCE(st.name, 'Não Definida') AS station_name,
+                COALESCE(st.name, 'NÃ£o Definida') AS station_name,
                 COALESCE(c.admission_fee, 0) AS admission_fee,
                 COUNT(cm.pilot_uid) AS members_count,
                 c.created_at
@@ -185,7 +185,7 @@ const getActiveCorporations = async (req, res) => {
 const applyToCorporation = async (req, res) => {
     const { pilot_uid, corporation_uid } = req.body;
     if (!pilot_uid || !corporation_uid) {
-        return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid e corporation_uid são obrigatórios.' });
+        return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid e corporation_uid sÃ£o obrigatÃ³rios.' });
     }
 
     let conn;
@@ -200,7 +200,7 @@ const applyToCorporation = async (req, res) => {
         );
         if (memberRows.length > 0) {
             await conn.rollback();
-            return res.status(400).json({ status: 'erro', mensagem: 'Você já faz parte de uma corporação. É necessário se desligar antes de se inscrever em outra.' });
+            return res.status(400).json({ status: 'erro', mensagem: 'VocÃª jÃ¡ faz parte de uma corporaÃ§Ã£o. Ã‰ necessÃ¡rio se desligar antes de se inscrever em outra.' });
         }
 
         // 2. Busca informacoes do piloto
@@ -217,12 +217,12 @@ const applyToCorporation = async (req, res) => {
         );
         if (corpRows.length === 0 || corpRows[0].status !== 'active') {
             await conn.rollback();
-            return res.status(404).json({ status: 'erro', mensagem: 'Corporação não encontrada ou inativa.' });
+            return res.status(404).json({ status: 'erro', mensagem: 'CorporaÃ§Ã£o nÃ£o encontrada ou inativa.' });
         }
         const corp = corpRows[0];
         const founderUid = Number(corp.founder_pilot_uid);
 
-        // 4. Garante que o piloto solicitante esteja na lista de contatos do fundador para exibição no canal
+        // 4. Garante que o piloto solicitante esteja na lista de contatos do fundador para exibiÃ§Ã£o no canal
         const existingContact = await conn.query(
             "SELECT 1 FROM pilot_contacts WHERE pilot_uid = ? AND contact_uid = ? LIMIT 1",
             [founderUid, pilot_uid]
@@ -235,7 +235,7 @@ const applyToCorporation = async (req, res) => {
         }
 
         // 5. Insere a mensagem de e-mail (type = 1, uid_channel = 6 [Contatos], uid_subchannel = pilot_uid)
-        const messageText = `O piloto ${pilotName} solicita ser aceito na corporação ${corp.name}.`;
+        const messageText = `O piloto ${pilotName} solicita ser aceito na corporaÃ§Ã£o ${corp.name}.`;
         await conn.query(
             `INSERT INTO messages (type, date_time, uid_destination, uid_origin, text, uid_channel, uid_subchannel, status, is_read)
              VALUES (1, NOW(), ?, ?, ?, 6, ?, 2, 0)`,
@@ -244,7 +244,7 @@ const applyToCorporation = async (req, res) => {
 
         await conn.commit();
 
-        // 6. Notificação em tempo real via WebSocket para o fundador
+        // 6. NotificaÃ§Ã£o em tempo real via WebSocket para o fundador
         if (req.app && req.app.locals && req.app.locals.notifyPilots) {
             req.app.locals.notifyPilots([founderUid], {
                 type: 'EMAIL_NOTIFICATION',
@@ -260,7 +260,7 @@ const applyToCorporation = async (req, res) => {
 
         return res.json({
             status: 'sucesso',
-            mensagem: `Solicitação enviada com sucesso ao líder fundador da ${corp.name}! Aguarde a aprovação.`,
+            mensagem: `SolicitaÃ§Ã£o enviada com sucesso ao lÃ­der fundador da ${corp.name}! Aguarde a aprovaÃ§Ã£o.`,
             data: {
                 corporation_uid: Number(corp.corporation_uid),
                 corporation_name: corp.name,
@@ -282,7 +282,7 @@ const applyToCorporation = async (req, res) => {
 const cancelApplication = async (req, res) => {
     const { pilot_uid } = req.body;
     if (!pilot_uid) {
-        return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid é obrigatório.' });
+        return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid Ã© obrigatÃ³rio.' });
     }
 
     let conn;
@@ -300,13 +300,13 @@ const cancelApplication = async (req, res) => {
              FROM messages m
              INNER JOIN corporations c ON c.founder_pilot_uid = m.uid_destination
              WHERE m.uid_origin = ?
-               AND m.text LIKE '%solicita ser aceito na corporação%'
+               AND m.text LIKE '%solicita ser aceito na corporaÃ§Ã£o%'
                AND NOT EXISTS (
                  SELECT 1 FROM messages cancel_msg
                  WHERE cancel_msg.uid_origin = m.uid_origin
                    AND cancel_msg.uid_destination = m.uid_destination
                    AND cancel_msg.date_time > m.date_time
-                   AND cancel_msg.text LIKE '%cancelou a solicitação%'
+                   AND cancel_msg.text LIKE '%cancelou a solicitaÃ§Ã£o%'
                )
              ORDER BY m.date_time DESC
              LIMIT 1`,
@@ -315,7 +315,7 @@ const cancelApplication = async (req, res) => {
 
         if (pendingRows.length === 0) {
             await conn.rollback();
-            return res.status(400).json({ status: 'erro', mensagem: 'Nenhuma solicitação pendente encontrada para cancelar.' });
+            return res.status(400).json({ status: 'erro', mensagem: 'Nenhuma solicitaÃ§Ã£o pendente encontrada para cancelar.' });
         }
 
         const pending = pendingRows[0];
@@ -327,7 +327,7 @@ const cancelApplication = async (req, res) => {
         const pilotName = pilotRows.length > 0 ? pilotRows[0].pilot : `Piloto #${pilot_uid}`;
 
         // 3. Insere a mensagem de cancelamento (e-mail type = 1, canal 6, subcanal = pilot_uid)
-        const cancelText = `O piloto ${pilotName} cancelou a solicitação de admissão na corporação ${corpName}.`;
+        const cancelText = `O piloto ${pilotName} cancelou a solicitaÃ§Ã£o de admissÃ£o na corporaÃ§Ã£o ${corpName}.`;
         await conn.query(
             `INSERT INTO messages (type, date_time, uid_destination, uid_origin, text, uid_channel, uid_subchannel, status, is_read)
              VALUES (1, NOW(), ?, ?, ?, 6, ?, 2, 0)`,
@@ -336,7 +336,7 @@ const cancelApplication = async (req, res) => {
 
         await conn.commit();
 
-        // 4. Notificação em tempo real via WebSocket para o fundador
+        // 4. NotificaÃ§Ã£o em tempo real via WebSocket para o fundador
         if (req.app && req.app.locals && req.app.locals.notifyPilots) {
             req.app.locals.notifyPilots([founderUid], {
                 type: 'EMAIL_NOTIFICATION',
@@ -352,7 +352,7 @@ const cancelApplication = async (req, res) => {
 
         return res.json({
             status: 'sucesso',
-            mensagem: `Solicitação de admissão na corporação ${corpName} cancelada com sucesso!`,
+            mensagem: `SolicitaÃ§Ã£o de admissÃ£o na corporaÃ§Ã£o ${corpName} cancelada com sucesso!`,
             data: {
                 corporation_uid: Number(pending.corporation_uid),
                 corporation_name: corpName
@@ -368,7 +368,7 @@ const cancelApplication = async (req, res) => {
 };
 
 /**
- * Lista as estações orbitais disponíveis para fundar uma corporação (Passo 4)
+ * Lista as estaÃ§Ãµes orbitais disponÃ­veis para fundar uma corporaÃ§Ã£o (Passo 4)
  */
 const getAvailableStations = async (req, res) => {
     let conn;
@@ -379,7 +379,7 @@ const getAvailableStations = async (req, res) => {
                 s.id AS station_id,
                 s.name AS station_name,
                 s.orbit_id,
-                COALESCE(o.name, 'Órbita Desconhecida') AS orbit_name
+                COALESCE(o.name, 'Ã“rbita Desconhecida') AS orbit_name
              FROM orbit_stations s
              LEFT JOIN orbits o ON o.id = s.orbit_id
              ORDER BY s.name ASC`
@@ -405,14 +405,14 @@ const getAvailableStations = async (req, res) => {
 };
 
 /**
- * Cria uma nova corporação (Passo 4)
- * - Taxa de abertura: 1.000.000 créditos
- * - Valida se o piloto não tem corporação nem pedido pendente
+ * Cria uma nova corporaÃ§Ã£o (Passo 4)
+ * - Taxa de abertura: 1.000.000 crÃ©ditos
+ * - Valida se o piloto nÃ£o tem corporaÃ§Ã£o nem pedido pendente
  * - Valida unicidade do nome
- * - Valida estação escolhida
+ * - Valida estaÃ§Ã£o escolhida
  * - Valida e debita 1.000.000 CR da carteira do piloto
- * - Credita 1.000.000 CR na carteira da estação
- * - Registra a transação em wallet_transactions
+ * - Credita 1.000.000 CR na carteira da estaÃ§Ã£o
+ * - Registra a transaÃ§Ã£o em wallet_transactions
  * - Insere na tabela corporations
  * - Insere o piloto como 'leader' em corporation_members
  */
@@ -421,17 +421,17 @@ const createCorporation = async (req, res) => {
     const FOUNDATION_FEE = 1000000;
 
     if (!pilot_uid) {
-        return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid é obrigatório.' });
+        return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid Ã© obrigatÃ³rio.' });
     }
 
     const trimmedName = (name || '').trim();
     if (!trimmedName || trimmedName.length < 3 || trimmedName.length > 30) {
-        return res.status(400).json({ status: 'erro', mensagem: 'O nome da corporação deve conter entre 3 e 30 caracteres.' });
+        return res.status(400).json({ status: 'erro', mensagem: 'O nome da corporaÃ§Ã£o deve conter entre 3 e 30 caracteres.' });
     }
 
     const parsedStationId = parseInt(station_uid, 10);
     if (isNaN(parsedStationId) || parsedStationId <= 0) {
-        return res.status(400).json({ status: 'erro', mensagem: 'Selecione uma estação base válida.' });
+        return res.status(400).json({ status: 'erro', mensagem: 'Selecione uma estaÃ§Ã£o base vÃ¡lida.' });
     }
 
     let conn;
@@ -439,58 +439,58 @@ const createCorporation = async (req, res) => {
         conn = await db.getConnection();
         await conn.beginTransaction();
 
-        // 1. Valida se o piloto já pertence a uma corporação
+        // 1. Valida se o piloto jÃ¡ pertence a uma corporaÃ§Ã£o
         const memberRows = await conn.query(
             "SELECT corporation_uid FROM corporation_members WHERE pilot_uid = ? LIMIT 1",
             [pilot_uid]
         );
         if (memberRows.length > 0) {
             await conn.rollback();
-            return res.status(400).json({ status: 'erro', mensagem: 'Você já faz parte de uma corporação. É necessário se desligar antes de fundar outra.' });
+            return res.status(400).json({ status: 'erro', mensagem: 'VocÃª jÃ¡ faz parte de uma corporaÃ§Ã£o. Ã‰ necessÃ¡rio se desligar antes de fundar outra.' });
         }
 
-        // 2. Valida se possui solicitação de ingresso pendente em outra corporação
+        // 2. Valida se possui solicitaÃ§Ã£o de ingresso pendente em outra corporaÃ§Ã£o
         const pendingRows = await conn.query(
             `SELECT 1 FROM messages m
              WHERE m.uid_origin = ?
-               AND m.text LIKE '%solicita ser aceito na corporação%'
+               AND m.text LIKE '%solicita ser aceito na corporaÃ§Ã£o%'
                AND NOT EXISTS (
                  SELECT 1 FROM messages cancel_msg
                  WHERE cancel_msg.uid_origin = m.uid_origin
                    AND cancel_msg.uid_destination = m.uid_destination
                    AND cancel_msg.date_time > m.date_time
-                   AND cancel_msg.text LIKE '%cancelou a solicitação%'
+                   AND cancel_msg.text LIKE '%cancelou a solicitaÃ§Ã£o%'
                )
              LIMIT 1`,
             [pilot_uid]
         );
         if (pendingRows.length > 0) {
             await conn.rollback();
-            return res.status(400).json({ status: 'erro', mensagem: 'Você possui uma solicitação de ingresso pendente. Cancele-a antes de fundar sua própria corporação.' });
+            return res.status(400).json({ status: 'erro', mensagem: 'VocÃª possui uma solicitaÃ§Ã£o de ingresso pendente. Cancele-a antes de fundar sua prÃ³pria corporaÃ§Ã£o.' });
         }
 
-        // 3. Valida se já existe uma corporação com esse nome (case-insensitive)
+        // 3. Valida se jÃ¡ existe uma corporaÃ§Ã£o com esse nome (case-insensitive)
         const existingNameRows = await conn.query(
             "SELECT corporation_uid FROM corporations WHERE LOWER(name) = LOWER(?) LIMIT 1",
             [trimmedName]
         );
         if (existingNameRows.length > 0) {
             await conn.rollback();
-            return res.status(400).json({ status: 'erro', mensagem: `O nome "${trimmedName}" já está em uso por outra corporação estelar.` });
+            return res.status(400).json({ status: 'erro', mensagem: `O nome "${trimmedName}" jÃ¡ estÃ¡ em uso por outra corporaÃ§Ã£o estelar.` });
         }
 
-        // 4. Valida se a estação existe
+        // 4. Valida se a estaÃ§Ã£o existe
         const stationRows = await conn.query(
             "SELECT id, name FROM orbit_stations WHERE id = ? LIMIT 1",
             [parsedStationId]
         );
         if (stationRows.length === 0) {
             await conn.rollback();
-            return res.status(404).json({ status: 'erro', mensagem: 'Estação base selecionada não encontrada no setor.' });
+            return res.status(404).json({ status: 'erro', mensagem: 'EstaÃ§Ã£o base selecionada nÃ£o encontrada no setor.' });
         }
         const stationName = stationRows[0].name;
 
-        // 5. Validação e Débito na carteira do piloto
+        // 5. ValidaÃ§Ã£o e DÃ©bito na carteira do piloto
         const pilotW = await conn.query(
             "SELECT credits FROM wallets WHERE wallet_uid = ? FOR UPDATE",
             [pilot_uid]
@@ -500,14 +500,14 @@ const createCorporation = async (req, res) => {
             await conn.rollback();
             return res.status(400).json({
                 status: 'erro',
-                mensagem: `Créditos insuficientes para fundar a corporação. Taxa necessária: 1.000.000 CR. Saldo atual: ${pilotCredits.toLocaleString('pt-BR')} CR.`
+                mensagem: `CrÃ©ditos insuficientes para fundar a corporaÃ§Ã£o. Taxa necessÃ¡ria: 1.000.000 CR. Saldo atual: ${pilotCredits.toLocaleString('pt-BR')} CR.`
             });
         }
 
         const pilotAfter = pilotCredits - FOUNDATION_FEE;
         await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [pilotAfter, pilot_uid]);
 
-        // 6. Crédito na carteira da estação
+        // 6. CrÃ©dito na carteira da estaÃ§Ã£o
         await conn.query(
             "INSERT IGNORE INTO wallets (wallet_uid, cash, credits) VALUES (?, 0, 1000000000)",
             [parsedStationId]
@@ -520,7 +520,7 @@ const createCorporation = async (req, res) => {
         const stationAfter = stationBefore + FOUNDATION_FEE;
         await conn.query("UPDATE wallets SET credits = ? WHERE wallet_uid = ?", [stationAfter, parsedStationId]);
 
-        // 7. Cria o registro da Corporação
+        // 7. Cria o registro da CorporaÃ§Ã£o
         const corpInsert = await conn.query(
             `INSERT INTO corporations (name, founder_pilot_uid, status, created_at, station_uid, admission_fee)
              VALUES (?, ?, 'active', NOW(), ?, 0)`,
@@ -528,7 +528,7 @@ const createCorporation = async (req, res) => {
         );
         const newCorpUid = Number(corpInsert.insertId);
 
-        // 8. Registra o fundador como líder em corporation_members
+        // 8. Registra o fundador como lÃ­der em corporation_members
         await conn.query(
             `INSERT INTO corporation_members (corporation_uid, pilot_uid, role, joined_at)
              VALUES (?, ?, 'leader', NOW())`,
@@ -559,7 +559,7 @@ const createCorporation = async (req, res) => {
 
         return res.status(201).json({
             status: 'sucesso',
-            mensagem: `Corporação "${trimmedName}" fundada com sucesso! Você é o Comandante Líder.`,
+            mensagem: `CorporaÃ§Ã£o "${trimmedName}" fundada com sucesso! VocÃª Ã© o Comandante LÃ­der.`,
             data: {
                 corporation_uid: newCorpUid,
                 name: trimmedName,
@@ -580,11 +580,11 @@ const createCorporation = async (req, res) => {
 };
 
 /**
- * Lista todas as equipes de uma corporação (corporation_teams)
+ * Lista todas as equipes de uma corporaÃ§Ã£o (corporation_teams)
  */
 const getCorporationTeams = async (req, res) => {
     const corpUid = req.params.corpUid;
-    if (!corpUid) return res.status(400).json({ status: 'erro', mensagem: 'corpUid é obrigatório.' });
+    if (!corpUid) return res.status(400).json({ status: 'erro', mensagem: 'corpUid Ã© obrigatÃ³rio.' });
     let conn;
     try {
         conn = await db.getConnection();
@@ -623,7 +623,7 @@ const createCorporationTeam = async (req, res) => {
     const corpUid = req.params.corpUid;
     const { description } = req.body;
     if (!corpUid || !description || !description.trim()) {
-        return res.status(400).json({ status: 'erro', mensagem: 'Descrição da equipe é obrigatória.' });
+        return res.status(400).json({ status: 'erro', mensagem: 'DescriÃ§Ã£o da equipe Ã© obrigatÃ³ria.' });
     }
     let conn;
     try {
@@ -661,7 +661,7 @@ const createCorporationTeam = async (req, res) => {
 const deleteCorporationTeam = async (req, res) => {
     const { corpUid, teamUid } = req.params;
     if (!corpUid || !teamUid) {
-        return res.status(400).json({ status: 'erro', mensagem: 'corpUid e teamUid são obrigatórios.' });
+        return res.status(400).json({ status: 'erro', mensagem: 'corpUid e teamUid sÃ£o obrigatÃ³rios.' });
     }
     let conn;
     try {
@@ -687,11 +687,11 @@ const deleteCorporationTeam = async (req, res) => {
 };
 
 /**
- * Lista todos os membros admitidos de uma corporação
+ * Lista todos os membros admitidos de uma corporaÃ§Ã£o
  */
 const getCorporationMembers = async (req, res) => {
     const corpUid = req.params.corpUid;
-    if (!corpUid) return res.status(400).json({ status: 'erro', mensagem: 'corpUid é obrigatório.' });
+    if (!corpUid) return res.status(400).json({ status: 'erro', mensagem: 'corpUid Ã© obrigatÃ³rio.' });
     let conn;
     try {
         conn = await db.getConnection();
@@ -737,7 +737,7 @@ const updateCorporationMember = async (req, res) => {
     const { corpUid, pilotUid } = req.params;
     const { role, team_uid } = req.body;
     if (!corpUid || !pilotUid) {
-        return res.status(400).json({ status: 'erro', mensagem: 'corpUid e pilotUid são obrigatórios.' });
+        return res.status(400).json({ status: 'erro', mensagem: 'corpUid e pilotUid sÃ£o obrigatÃ³rios.' });
     }
     let conn;
     try {
@@ -748,7 +748,7 @@ const updateCorporationMember = async (req, res) => {
         if (role !== undefined) {
             const validRoles = ['leader', 'officer', 'member'];
             if (!validRoles.includes(role)) {
-                return res.status(400).json({ status: 'erro', mensagem: 'Cargo inválido. Opções: leader, officer, member.' });
+                return res.status(400).json({ status: 'erro', mensagem: 'Cargo invÃ¡lido. OpÃ§Ãµes: leader, officer, member.' });
             }
             updates.push("role = ?");
             params.push(role);
@@ -763,7 +763,7 @@ const updateCorporationMember = async (req, res) => {
                     [corpUid, team_uid]
                 );
                 if (teamCheck.length === 0) {
-                    return res.status(404).json({ status: 'erro', mensagem: 'Equipe não encontrada para esta corporação.' });
+                    return res.status(404).json({ status: 'erro', mensagem: 'Equipe nÃ£o encontrada para esta corporaÃ§Ã£o.' });
                 }
                 updates.push("team_uid = ?");
                 params.push(Number(team_uid));
@@ -790,12 +790,12 @@ const updateCorporationMember = async (req, res) => {
 };
 
 /**
- * Desliga (exclui) um admitido da corporação
+ * Desliga (exclui) um admitido da corporaÃ§Ã£o
  */
 const removeCorporationMember = async (req, res) => {
     const { corpUid, pilotUid } = req.params;
     if (!corpUid || !pilotUid) {
-        return res.status(400).json({ status: 'erro', mensagem: 'corpUid e pilotUid são obrigatórios.' });
+        return res.status(400).json({ status: 'erro', mensagem: 'corpUid e pilotUid sÃ£o obrigatÃ³rios.' });
     }
     let conn;
     try {
@@ -805,7 +805,7 @@ const removeCorporationMember = async (req, res) => {
             [corpUid]
         );
         if (corpRows.length > 0 && Number(corpRows[0].founder_pilot_uid) === Number(pilotUid)) {
-            return res.status(400).json({ status: 'erro', mensagem: 'Não é possível desligar o líder fundador da corporação.' });
+            return res.status(400).json({ status: 'erro', mensagem: 'NÃ£o Ã© possÃ­vel desligar o lÃ­der fundador da corporaÃ§Ã£o.' });
         }
 
         const result = await conn.query(
@@ -814,13 +814,725 @@ const removeCorporationMember = async (req, res) => {
         );
 
         if (result.affectedRows === 0) {
-            return res.status(404).json({ status: 'erro', mensagem: 'Membro não encontrado nesta corporação.' });
+            return res.status(404).json({ status: 'erro', mensagem: 'Membro nÃ£o encontrado nesta corporaÃ§Ã£o.' });
         }
 
-        return res.json({ status: 'sucesso', mensagem: 'Piloto desligado da corporação com sucesso.' });
+        return res.json({ status: 'sucesso', mensagem: 'Piloto desligado da corporaÃ§Ã£o com sucesso.' });
     } catch (err) {
         console.error('[removeCorporationMember Error]:', err);
         return res.status(500).json({ status: 'erro', mensagem: 'Falha ao desligar membro.' });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Garante a criação da tabela de transações de itens da corporação
+ */
+async function ensureCorporationItemTransactionsTable(conn) {
+    await conn.query(`
+        CREATE TABLE IF NOT EXISTS corporation_item_transactions (
+            transaction_uid INT AUTO_INCREMENT PRIMARY KEY,
+            corporation_uid INT NOT NULL,
+            pilot_uid INT NOT NULL,
+            operator_pilot_uid INT NOT NULL,
+            item_code INT NOT NULL,
+            item_name VARCHAR(120) NOT NULL,
+            item_type INT DEFAULT 1,
+            quantity INT NOT NULL,
+            direction VARCHAR(20) NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_cit_corp (corporation_uid),
+            INDEX idx_cit_pilot (pilot_uid)
+        )
+    `);
+}
+
+/**
+ * Helper para detectar se a tabela é market_itens ou market_items
+ */
+async function getMarketTableName(conn) {
+    try {
+        const rows = await conn.query("SHOW TABLES LIKE 'market_itens'");
+        if (rows && rows.length > 0) return 'market_itens';
+    } catch (e) {}
+    return 'market_items';
+}
+
+/**
+ * Garante que a coluna corporation_uid exista na tabela do mercado
+ */
+async function ensureCorporationUidColumn(conn, marketTable) {
+    try {
+        const cols = await conn.query(`SHOW COLUMNS FROM ${marketTable} LIKE 'corporation_uid'`);
+        if (cols.length === 0) {
+            await conn.query(`ALTER TABLE ${marketTable} ADD COLUMN corporation_uid INT NULL DEFAULT NULL`);
+        }
+    } catch (e) {
+        console.warn(`[ensureCorporationUidColumn Warning]:`, e.message);
+    }
+}
+
+/**
+ * Lista itens presentes na área de carga / hangar da corporação
+ */
+const getCorporationItems = async (req, res) => {
+    const corpUid = req.params.corpUid;
+    if (!corpUid) return res.status(400).json({ status: 'erro', mensagem: 'corpUid é obrigatório.' });
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const marketTable = await getMarketTableName(conn);
+        await ensureCorporationUidColumn(conn, marketTable);
+
+        const corpRows = await conn.query(
+            "SELECT corporation_uid, name, station_uid, founder_pilot_uid FROM corporations WHERE corporation_uid = ? LIMIT 1",
+            [corpUid]
+        );
+        if (corpRows.length === 0) {
+            return res.status(404).json({ status: 'erro', mensagem: 'Corporação não encontrada.' });
+        }
+        const corp = corpRows[0];
+
+        const itemRows = await conn.query(
+            `SELECT 
+                mi.item_code,
+                mi.stock AS amount,
+                i.name,
+                COALESCE(i.item_type, 1) AS item_type,
+                COALESCE(i.volume, 1) AS volume,
+                i.image
+             FROM ${marketTable} mi
+             INNER JOIN items i ON i.item_code = mi.item_code
+             WHERE mi.corporation_uid = ? AND mi.stock > 0
+             ORDER BY i.item_type ASC, i.name ASC`,
+            [corpUid]
+        );
+
+        let totalUsedVol = 0;
+        const maxVol = 100000;
+
+        const items = itemRows.map(r => {
+            const amount = Number(r.amount);
+            const unitVol = Number(r.volume || 1);
+            const totalVol = amount * unitVol;
+            totalUsedVol += totalVol;
+
+            let img = r.image || null;
+            if (img && typeof img === 'string') {
+                if (img.toLowerCase().endsWith('.svg')) {
+                    img = img.replace(/\.svg$/i, '.png');
+                }
+                if (!img.startsWith('http') && !img.startsWith('/')) {
+                    img = `/items/${img}`;
+                }
+            }
+
+            return {
+                item_code: Number(r.item_code),
+                name: String(r.name || '').toUpperCase(),
+                item_type: Number(r.item_type),
+                amount,
+                unit_volume: unitVol,
+                volume: unitVol,
+                total_volume: totalVol,
+                image_url: img
+            };
+        });
+
+        return res.json({
+            status: 'sucesso',
+            data: {
+                corporation_uid: Number(corp.corporation_uid),
+                station_uid: corp.station_uid,
+                max_volume: maxVol,
+                used_volume: totalUsedVol,
+                available_volume: Math.max(0, maxVol - totalUsedVol),
+                items
+            }
+        });
+    } catch (err) {
+        console.error('[getCorporationItems Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Consulta a área de carga (hangar) de um membro específico da corporação
+ * Retorna tanto itens normais de hangar quanto espaçonaves (tipo 6) atracadas na estação!
+ */
+const getCorporationMemberHangar = async (req, res) => {
+    const { corpUid, pilotUid } = req.params;
+    if (!corpUid || !pilotUid) {
+        return res.status(400).json({ status: 'erro', mensagem: 'corpUid e pilotUid são obrigatórios.' });
+    }
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+
+        const corpRows = await conn.query(
+            "SELECT station_uid FROM corporations WHERE corporation_uid = ? LIMIT 1",
+            [corpUid]
+        );
+        const corpStationId = corpRows.length > 0 ? Number(corpRows[0].station_uid) : 1;
+
+        const pilotRows = await conn.query(
+            "SELECT pilot_uid, pilot AS pilot_name, orbit, station FROM pilots WHERE pilot_uid = ? LIMIT 1",
+            [pilotUid]
+        );
+        if (pilotRows.length === 0) {
+            return res.status(404).json({ status: 'erro', mensagem: 'Piloto não encontrado.' });
+        }
+        const pilot = pilotRows[0];
+        const targetStationId = Number(pilot.station) || corpStationId;
+
+        // 1. Busca container de hangar do piloto nesta estação
+        let contRows = await conn.query(
+            "SELECT container_uid, max_volume, current_volume FROM containers WHERE owner = ? AND storage = ? AND type = 'hangar' LIMIT 1",
+            [pilotUid, targetStationId]
+        );
+
+        let containerUid;
+        let maxVol = 50000;
+        if (contRows.length === 0) {
+            // Tenta encontrar qualquer container do tipo hangar deste piloto caso o storage seja diferente
+            const fallbackCont = await conn.query(
+                "SELECT container_uid, max_volume, current_volume, storage FROM containers WHERE owner = ? AND type = 'hangar' ORDER BY current_volume DESC LIMIT 1",
+                [pilotUid]
+            );
+            if (fallbackCont.length > 0) {
+                containerUid = Number(fallbackCont[0].container_uid);
+                maxVol = Number(fallbackCont[0].max_volume) || 50000;
+            } else {
+                const resInsert = await conn.query(
+                    "INSERT INTO containers (owner, storage, type, max_volume, current_volume, protected) VALUES (?, ?, 'hangar', 50000, 0, 'y')",
+                    [pilotUid, targetStationId]
+                );
+                containerUid = Number(resInsert.insertId);
+            }
+        } else {
+            containerUid = Number(contRows[0].container_uid);
+            maxVol = Number(contRows[0].max_volume) || 50000;
+        }
+
+        // 2. Busca itens de suprimentos / equipamentos no container
+        const slotRows = await conn.query(
+            `SELECT cs.slot, cs.item_code, cs.amount,
+                    i.name, COALESCE(i.item_type, 1) AS item_type, COALESCE(i.volume, 1) AS volume, i.image
+             FROM container_slots cs
+             INNER JOIN items i ON i.item_code = cs.item_code
+             WHERE cs.container_uid = ? AND cs.amount > 0
+             ORDER BY i.item_type ASC, i.name ASC`,
+            [containerUid]
+        );
+
+        let usedVol = 0;
+        const items = slotRows.map(r => {
+            const amount = Number(r.amount);
+            const unitVol = Number(r.volume || 1);
+            const totalVol = amount * unitVol;
+            usedVol += totalVol;
+
+            let img = r.image || null;
+            if (img && typeof img === 'string') {
+                if (img.toLowerCase().endsWith('.svg')) {
+                    img = img.replace(/\.svg$/i, '.png');
+                }
+                if (!img.startsWith('http') && !img.startsWith('/')) {
+                    img = `/items/${img}`;
+                }
+            }
+
+            return {
+                item_code: Number(r.item_code),
+                name: String(r.name || '').toUpperCase(),
+                item_type: Number(r.item_type),
+                amount,
+                unit_volume: unitVol,
+                volume: unitVol,
+                total_volume: totalVol,
+                image_url: img
+            };
+        });
+
+        // 3. Busca naves (item_type = 6) atracadas pelo piloto
+        try {
+            const vesselRows = await conn.query(
+                `SELECT v.item_code, COUNT(v.vessel_uid) AS amount,
+                        COALESCE(i.name, 'Nave Estelar') AS name, 6 AS item_type,
+                        COALESCE(i.volume, 1000) AS volume, i.image
+                 FROM vessels v
+                 INNER JOIN items i ON i.item_code = v.item_code
+                 WHERE v.pilot_uid = ? AND (v.station = ? OR v.station IS NULL) AND (v.selected = 'n' OR v.selected IS NULL OR v.selected = '0')
+                 GROUP BY v.item_code, i.name, i.volume, i.image
+                 ORDER BY i.name ASC`,
+                [pilotUid, targetStationId]
+            );
+
+            for (const v of vesselRows) {
+                const amount = Number(v.amount);
+                const unitVol = Number(v.volume || 1000);
+                let img = v.image || null;
+                if (img && typeof img === 'string') {
+                    if (img.toLowerCase().endsWith('.svg')) {
+                        img = img.replace(/\.svg$/i, '.png');
+                    }
+                    if (!img.startsWith('http') && !img.startsWith('/')) {
+                        img = `/hologramas/${img}`;
+                    }
+                }
+                items.push({
+                    item_code: Number(v.item_code),
+                    name: String(v.name || '').toUpperCase(),
+                    item_type: 6,
+                    amount,
+                    unit_volume: unitVol,
+                    volume: unitVol,
+                    total_volume: amount * unitVol,
+                    image_url: img
+                });
+            }
+        } catch (vErr) {
+            console.warn('[getCorporationMemberHangar vessels Warning]:', vErr.message);
+        }
+
+        if (containerUid) {
+            await conn.query("UPDATE containers SET current_volume = ? WHERE container_uid = ?", [usedVol, containerUid]);
+        }
+
+        return res.json({
+            status: 'sucesso',
+            data: {
+                pilot_uid: Number(pilot.pilot_uid),
+                pilot_name: pilot.pilot_name,
+                station_id: targetStationId,
+                max_volume: maxVol,
+                used_volume: usedVol,
+                available_volume: Math.max(0, maxVol - usedVol),
+                items
+            }
+        });
+    } catch (err) {
+        console.error('[getCorporationMemberHangar Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Executa a transferência de itens ou naves entre o Membro e a Corporação
+ */
+const transferCorporationItem = async (req, res) => {
+    const corpUid = req.params.corpUid;
+    const { pilot_uid, item_code, quantity, direction, operator_pilot_uid } = req.body;
+    const qty = parseInt(quantity, 10);
+    const itCode = Number(item_code);
+    const memberUid = Number(pilot_uid);
+    const operatorUid = Number(operator_pilot_uid || memberUid);
+
+    if (!corpUid || !memberUid || !itCode || !qty || qty <= 0 || !direction) {
+        return res.status(400).json({ status: 'erro', mensagem: 'Parâmetros inválidos para transferência.' });
+    }
+
+    if (direction !== 'TO_CORPORATION' && direction !== 'TO_MEMBER') {
+        return res.status(400).json({ status: 'erro', mensagem: "Direção inválida. Use 'TO_CORPORATION' ou 'TO_MEMBER'." });
+    }
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const marketTable = await getMarketTableName(conn);
+        await conn.beginTransaction();
+
+        const corpRows = await conn.query(
+            "SELECT corporation_uid, name, founder_pilot_uid, station_uid FROM corporations WHERE corporation_uid = ? LIMIT 1",
+            [corpUid]
+        );
+        if (corpRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: 'erro', mensagem: 'Corporação não encontrada.' });
+        }
+        const corp = corpRows[0];
+        const founderUid = Number(corp.founder_pilot_uid);
+        const corpStationId = Number(corp.station_uid || 1);
+
+        // Validação de permissões: apenas Líder e Oficiais podem transferir itens da corporação para membros
+        if (direction === 'TO_MEMBER') {
+            const opMemberRows = await conn.query(
+                "SELECT role FROM corporation_members WHERE corporation_uid = ? AND pilot_uid = ? LIMIT 1",
+                [corpUid, operatorUid]
+            );
+            const isFounder = operatorUid === founderUid;
+            const opRole = opMemberRows.length > 0 ? String(opMemberRows[0].role).toLowerCase() : '';
+            const canManage = isFounder || opRole === 'leader' || opRole === 'officer';
+            if (!canManage) {
+                await conn.rollback();
+                return res.status(403).json({
+                    status: 'erro',
+                    mensagem: 'Apenas o Líder e Oficiais podem transferir itens da corporação para membros.'
+                });
+            }
+        }
+
+        // Validação de segurança: apenas o próprio membro pode doar itens do seu armazém para a corporação
+        if (direction === 'TO_CORPORATION') {
+            if (operatorUid !== memberUid) {
+                await conn.rollback();
+                return res.status(403).json({
+                    status: 'erro',
+                    mensagem: 'Você só pode doar itens do seu próprio armazém para a corporação.'
+                });
+            }
+        }
+
+        const itemRows = await conn.query(
+            "SELECT item_code, name, COALESCE(item_type, 1) AS item_type, COALESCE(volume, 1) AS volume FROM items WHERE item_code = ? LIMIT 1",
+            [itCode]
+        );
+        if (itemRows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ status: 'erro', mensagem: 'Item não encontrado.' });
+        }
+        const item = itemRows[0];
+        const itemName = item.name || `ITEM #${itCode}`;
+        const itemType = Number(item.item_type || 1);
+        const isShip = itemType === 6;
+
+        const pilotRows = await conn.query("SELECT orbit, station FROM pilots WHERE pilot_uid = ? LIMIT 1", [memberUid]);
+        const memberStationId = pilotRows.length > 0 ? Number(pilotRows[0].station) || corpStationId : corpStationId;
+        const memberOrbitId = pilotRows.length > 0 ? Number(pilotRows[0].orbit) || 2 : 2;
+
+        if (isShip) {
+            // ==========================================
+            // TRANSFERÊNCIA DE NAVE (item_type = 6)
+            // ==========================================
+            if (direction === 'TO_CORPORATION') {
+                const availableVessels = await conn.query(
+                    "SELECT vessel_uid, selected FROM vessels WHERE pilot_uid = ? AND item_code = ? AND (selected = 'n' OR selected IS NULL OR selected = '0') ORDER BY vessel_uid DESC FOR UPDATE",
+                    [memberUid, itCode]
+                );
+
+                if (availableVessels.length < qty) {
+                    await conn.rollback();
+                    return res.status(400).json({
+                        status: 'erro',
+                        mensagem: `Você não possui naves inativas deste modelo para doar (disponível no hangar: ${availableVessels.length}). Naves em operação ativa não podem ser doadas.`
+                    });
+                }
+
+                // Remove a(s) nave(s) do piloto e containers associados
+                const vesselsToMove = availableVessels.slice(0, qty);
+                for (const v of vesselsToMove) {
+                    await conn.query("DELETE FROM containers WHERE storage = ? AND type = 'vessel_cargo'", [v.vessel_uid]);
+                    await conn.query("DELETE FROM vessels WHERE vessel_uid = ? AND pilot_uid = ?", [v.vessel_uid, memberUid]);
+                }
+
+                // Adiciona ao estoque da corporação no market_items
+                const corpShipRow = await conn.query(
+                    `SELECT stock FROM ${marketTable} WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ? LIMIT 1 FOR UPDATE`,
+                    [corpStationId, itCode, founderUid]
+                );
+                if (corpShipRow.length > 0) {
+                    await conn.query(
+                        `UPDATE ${marketTable} SET stock = stock + ?, corporation_uid = ? WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ?`,
+                        [qty, corpUid, corpStationId, itCode, founderUid]
+                    );
+                } else {
+                    await conn.query(
+                        `INSERT INTO ${marketTable} (market_uid, item_code, owner_pilot_uid, corporation_uid, stock, ideal_stock, selling_price, buying_price, base_price)
+                         VALUES (?, ?, ?, ?, ?, 100, 0, 0, 0)
+                         ON DUPLICATE KEY UPDATE stock = stock + VALUES(stock), corporation_uid = VALUES(corporation_uid)`,
+                        [corpStationId, itCode, founderUid, corpUid, qty]
+                    );
+                }
+
+            } else if (direction === 'TO_MEMBER') {
+                const corpShipRow = await conn.query(
+                    `SELECT stock FROM ${marketTable} WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ? AND corporation_uid = ? LIMIT 1 FOR UPDATE`,
+                    [corpStationId, itCode, founderUid, corpUid]
+                );
+                const corpStock = corpShipRow.length > 0 ? Number(corpShipRow[0].stock) : 0;
+                if (corpStock < qty) {
+                    await conn.rollback();
+                    return res.status(400).json({
+                        status: 'erro',
+                        mensagem: `Quantidade insuficiente de naves na corporação (disponível: ${corpStock}).`
+                    });
+                }
+
+                if (corpStock - qty <= 0) {
+                    await conn.query(
+                        `DELETE FROM ${marketTable} WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ? AND corporation_uid = ?`,
+                        [corpStationId, itCode, founderUid, corpUid]
+                    );
+                } else {
+                    await conn.query(
+                        `UPDATE ${marketTable} SET stock = stock - ? WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ? AND corporation_uid = ?`,
+                        [qty, corpStationId, itCode, founderUid, corpUid]
+                    );
+                }
+
+                // Cria a(s) nave(s) no hangar do membro
+                for (let i = 0; i < qty; i++) {
+                    await conn.query(
+                        `INSERT INTO vessels (pilot_uid, item_code, selected, engine, sensors, life_support, inertial_damper, integrity, orbit, station)
+                         VALUES (?, ?, 'n', 100, 100, 100, 100, 100, ?, ?)`,
+                        [memberUid, itCode, memberOrbitId, memberStationId]
+                    );
+                }
+            }
+
+        } else {
+            // ==========================================
+            // TRANSFERÊNCIA DE ITENS / COMPONENTES (1 a 5)
+            // ==========================================
+            let contRows = await conn.query(
+                "SELECT container_uid, max_volume, current_volume FROM containers WHERE owner = ? AND storage = ? AND type = 'hangar' LIMIT 1 FOR UPDATE",
+                [memberUid, memberStationId]
+            );
+            let memberContainerUid;
+            if (contRows.length === 0) {
+                const fallbackCont = await conn.query(
+                    "SELECT container_uid FROM containers WHERE owner = ? AND type = 'hangar' ORDER BY current_volume DESC LIMIT 1 FOR UPDATE",
+                    [memberUid]
+                );
+                if (fallbackCont.length > 0) {
+                    memberContainerUid = Number(fallbackCont[0].container_uid);
+                } else {
+                    const insCont = await conn.query(
+                        "INSERT INTO containers (owner, storage, type, max_volume, current_volume, protected) VALUES (?, ?, 'hangar', 50000, 0, 'y')",
+                        [memberUid, memberStationId]
+                    );
+                    memberContainerUid = Number(insCont.insertId);
+                }
+            } else {
+                memberContainerUid = Number(contRows[0].container_uid);
+            }
+
+            if (direction === 'TO_CORPORATION') {
+                const slotRows = await conn.query(
+                    "SELECT slot, amount FROM container_slots WHERE container_uid = ? AND item_code = ? ORDER BY slot ASC FOR UPDATE",
+                    [memberContainerUid, itCode]
+                );
+                const totalAvail = slotRows.reduce((acc, s) => acc + Number(s.amount), 0);
+                if (totalAvail < qty) {
+                    await conn.rollback();
+                    return res.status(400).json({
+                        status: 'erro',
+                        mensagem: `Quantidade insuficiente no armazém do piloto (disponível: ${totalAvail}).`
+                    });
+                }
+
+                let rem = qty;
+                for (const s of slotRows) {
+                    if (rem <= 0) break;
+                    const slotAmt = Number(s.amount);
+                    if (slotAmt <= rem) {
+                        await conn.query("DELETE FROM container_slots WHERE container_uid = ? AND slot = ?", [memberContainerUid, s.slot]);
+                        rem -= slotAmt;
+                    } else {
+                        await conn.query("UPDATE container_slots SET amount = amount - ? WHERE container_uid = ? AND slot = ?", [rem, memberContainerUid, s.slot]);
+                        rem = 0;
+                    }
+                }
+
+                const corpItemRow = await conn.query(
+                    `SELECT stock FROM ${marketTable} WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ? LIMIT 1 FOR UPDATE`,
+                    [corpStationId, itCode, founderUid]
+                );
+
+                if (corpItemRow.length > 0) {
+                    await conn.query(
+                        `UPDATE ${marketTable} SET stock = stock + ?, corporation_uid = ? WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ?`,
+                        [qty, corpUid, corpStationId, itCode, founderUid]
+                    );
+                } else {
+                    await conn.query(
+                        `INSERT INTO ${marketTable} (market_uid, item_code, owner_pilot_uid, corporation_uid, stock, ideal_stock, selling_price, buying_price, base_price)
+                         VALUES (?, ?, ?, ?, ?, 100, 0, 0, 0)
+                         ON DUPLICATE KEY UPDATE stock = stock + VALUES(stock), corporation_uid = VALUES(corporation_uid)`,
+                        [corpStationId, itCode, founderUid, corpUid, qty]
+                    );
+                }
+
+            } else if (direction === 'TO_MEMBER') {
+                const corpItemRow = await conn.query(
+                    `SELECT stock FROM ${marketTable} WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ? AND corporation_uid = ? LIMIT 1 FOR UPDATE`,
+                    [corpStationId, itCode, founderUid, corpUid]
+                );
+                const corpStock = corpItemRow.length > 0 ? Number(corpItemRow[0].stock) : 0;
+                if (corpStock < qty) {
+                    await conn.rollback();
+                    return res.status(400).json({
+                        status: 'erro',
+                        mensagem: `Quantidade insuficiente na área de carga da corporação (disponível: ${corpStock}).`
+                    });
+                }
+
+                if (corpStock - qty <= 0) {
+                    await conn.query(
+                        `DELETE FROM ${marketTable} WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ? AND corporation_uid = ?`,
+                        [corpStationId, itCode, founderUid, corpUid]
+                    );
+                } else {
+                    await conn.query(
+                        `UPDATE ${marketTable} SET stock = stock - ? WHERE market_uid = ? AND item_code = ? AND owner_pilot_uid = ? AND corporation_uid = ?`,
+                        [qty, corpStationId, itCode, founderUid, corpUid]
+                    );
+                }
+
+                const existingSlot = await conn.query(
+                    "SELECT slot FROM container_slots WHERE container_uid = ? AND item_code = ? LIMIT 1 FOR UPDATE",
+                    [memberContainerUid, itCode]
+                );
+                if (existingSlot.length > 0) {
+                    await conn.query(
+                        "UPDATE container_slots SET amount = amount + ? WHERE container_uid = ? AND slot = ?",
+                        [qty, memberContainerUid, existingSlot[0].slot]
+                    );
+                } else {
+                    const maxSlotRow = await conn.query(
+                        "SELECT COALESCE(MAX(slot), 0) AS max_slot FROM container_slots WHERE container_uid = ?",
+                        [memberContainerUid]
+                    );
+                    const nextSlot = Number(maxSlotRow[0].max_slot || 0) + 1;
+                    await conn.query(
+                        "INSERT INTO container_slots (container_uid, slot, item_code, amount) VALUES (?, ?, ?, ?)",
+                        [memberContainerUid, nextSlot, itCode, qty]
+                    );
+                }
+            }
+        }
+
+        // Registra transação no histórico
+        await conn.query(
+            `INSERT INTO corporation_item_transactions 
+                (corporation_uid, pilot_uid, operator_pilot_uid, item_code, item_name, item_type, quantity, direction, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [corpUid, memberUid, operatorUid, itCode, itemName, itemType, qty, direction]
+        );
+
+        await conn.commit();
+
+        return res.json({
+            status: 'sucesso',
+            mensagem: direction === 'TO_CORPORATION'
+                ? `${isShip ? 'Espaçonave' : 'Item'} ${itemName} (x${qty}) doado para a Corporação!`
+                : `${isShip ? 'Espaçonave' : 'Item'} ${itemName} (x${qty}) transferido para o membro!`
+        });
+    } catch (err) {
+        if (conn) await conn.rollback();
+        console.error('[transferCorporationItem Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * Consulta o histórico de movimentações de itens da corporação
+ */
+const getCorporationItemTransactions = async (req, res) => {
+    const corpUid = req.params.corpUid;
+    const callerPilotUid = req.query.caller_pilot_uid || req.query.pilot_uid;
+
+    if (!corpUid) return res.status(400).json({ status: 'erro', mensagem: 'corpUid é obrigatório.' });
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        await ensureCorporationItemTransactionsTable(conn);
+
+        let isLeaderOrOfficer = false;
+        if (callerPilotUid) {
+            const roleRows = await conn.query(
+                `SELECT cm.role, c.founder_pilot_uid 
+                 FROM corporation_members cm 
+                 INNER JOIN corporations c ON c.corporation_uid = cm.corporation_uid
+                 WHERE cm.corporation_uid = ? AND cm.pilot_uid = ? LIMIT 1`,
+                [corpUid, callerPilotUid]
+            );
+            if (roleRows.length > 0) {
+                const r = roleRows[0];
+                if (r.role === 'leader' || r.role === 'officer' || Number(r.founder_pilot_uid) === Number(callerPilotUid)) {
+                    isLeaderOrOfficer = true;
+                }
+            }
+        }
+
+        let whereClause = "cit.corporation_uid = ?";
+        const params = [corpUid];
+
+        if (!isLeaderOrOfficer && callerPilotUid) {
+            whereClause += " AND (cit.pilot_uid = ? OR cit.operator_pilot_uid = ?)";
+            params.push(callerPilotUid, callerPilotUid);
+        }
+
+        const rows = await conn.query(
+            `SELECT 
+                cit.transaction_uid,
+                cit.corporation_uid,
+                cit.pilot_uid,
+                COALESCE(p_target.pilot, 'Piloto Desconhecido') AS pilot_name,
+                cit.operator_pilot_uid,
+                COALESCE(p_op.pilot, 'Operador') AS operator_name,
+                cit.item_code,
+                cit.item_name,
+                cit.item_type,
+                cit.quantity,
+                cit.direction,
+                cit.created_at,
+                i.image
+             FROM corporation_item_transactions cit
+             LEFT JOIN pilots p_target ON p_target.pilot_uid = cit.pilot_uid
+             LEFT JOIN pilots p_op ON p_op.pilot_uid = cit.operator_pilot_uid
+             LEFT JOIN items i ON i.item_code = cit.item_code
+             WHERE ${whereClause}
+             ORDER BY cit.transaction_uid DESC
+             LIMIT 100`,
+            params
+        );
+
+        const transactions = rows.map(r => {
+            let img = r.image || null;
+            if (img && typeof img === 'string') {
+                if (img.toLowerCase().endsWith('.svg')) {
+                    img = img.replace(/\.svg$/i, '.png');
+                }
+                if (!img.startsWith('http') && !img.startsWith('/')) {
+                    if (Number(r.item_type) === 6) {
+                        img = `/hologramas/${img}`;
+                    } else {
+                        img = `/items/${img}`;
+                    }
+                }
+            }
+            return {
+                transaction_uid: Number(r.transaction_uid),
+                corporation_uid: Number(r.corporation_uid),
+                pilot_uid: Number(r.pilot_uid),
+                pilot_name: r.pilot_name,
+                operator_pilot_uid: Number(r.operator_pilot_uid),
+                operator_name: r.operator_name,
+                item_code: Number(r.item_code),
+                item_name: r.item_name,
+                item_type: Number(r.item_type),
+                quantity: Number(r.quantity),
+                direction: r.direction,
+                created_at: r.created_at,
+                image_url: img
+            };
+        });
+
+        return res.json({ status: 'sucesso', data: transactions });
+    } catch (err) {
+        console.error('[getCorporationItemTransactions Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
     } finally {
         if (conn) conn.release();
     }
@@ -838,5 +1550,10 @@ module.exports = {
     deleteCorporationTeam,
     getCorporationMembers,
     updateCorporationMember,
-    removeCorporationMember
+    removeCorporationMember,
+    getCorporationItems,
+    getCorporationMemberHangar,
+    transferCorporationItem,
+    getCorporationItemTransactions
 };
+
