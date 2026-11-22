@@ -1,6 +1,7 @@
 const Http = require('http');
 const WebSocket = require('ws');
 const app = require('./app');
+const { startContractExpirationWorker } = require('./services/contractExpirationWorker');
 
 const PORT = 8020;
 const httpServer = Http.createServer(app);
@@ -72,5 +73,6 @@ app.locals.notifyPilots = notifyPilots;
 
 httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor Star Orphans rodando na porta ${PORT} (0.0.0.0) com suporte a WebSockets`);
+    startContractExpirationWorker(notifyPilots, 30000);
 });
 // restart nodemon 639282035211640099

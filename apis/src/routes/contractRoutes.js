@@ -7,6 +7,11 @@ router.get('/contracts/available', contractController.getAvailableContracts);
 router.get('/contracts/active/:pilotUid', contractController.getActiveContracts);
 router.get('/contracts/issuer/:pilotUid', contractController.getIssuerContracts);
 
+// Buscas auxiliares para criação/edição de contratos
+router.get('/contracts/search/pilots', contractController.searchContractPilots);
+router.get('/contracts/search/corporations', contractController.searchContractCorporations);
+router.get('/contracts/search/items', contractController.searchContractItems);
+
 // Gestão de Contratos (Contratante)
 router.post('/contracts/create', contractController.createContract);
 router.put('/contracts/:contractUid', contractController.editContract);

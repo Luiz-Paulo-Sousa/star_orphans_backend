@@ -1,5 +1,7 @@
 const db = require('../config/database');
 
+const FIXED_CONTRACT_REPUTATION = 1;
+
 /**
  * Helper para formatar o objeto do contrato para o frontend
  */
@@ -20,11 +22,15 @@ const formatContract = (r) => {
         destination_station_name: r.destination_station_name || null,
         target_orbit: r.target_orbit != null ? Number(r.target_orbit) : null,
         reward_credits: Number(r.reward_credits || 0),
-        reward_reputation: Number(r.reward_reputation || 0),
+        reward_reputation: Number(r.reward_reputation ?? FIXED_CONTRACT_REPUTATION),
         collateral_credits: Number(r.collateral_credits || 0),
         target_item_code: r.target_item_code != null ? Number(r.target_item_code) : null,
         target_item_name: r.target_item_name || null,
         target_amount: Number(r.target_amount || 1),
+        target_pilot_uid: r.target_pilot_uid != null ? Number(r.target_pilot_uid) : null,
+        target_pilot_name: r.target_pilot_name || null,
+        target_corporation_uid: r.target_corporation_uid != null ? Number(r.target_corporation_uid) : null,
+        target_corporation_name: r.target_corporation_name || null,
         duration_seconds: Number(r.duration_seconds || 86400),
         uncancellable: r.uncancellable || 'n',
         status: r.status || 'available',
@@ -36,6 +42,151 @@ const formatContract = (r) => {
         deadline_at: r.deadline_at || undefined,
         current_progress: r.current_progress != null ? Number(r.current_progress) : undefined,
         target_progress: r.target_progress != null ? Number(r.target_progress) : Number(r.target_amount || 1),
+    };
+};
+
+/**
+ * Helper de validação das regras específicas por tipo de contrato
+ */
+const validateAndNormalizeContractFields = async (conn, payload) => {
+    const type = (payload.contract_type || 'bounty').toString().toLowerCase();
+    const validTypes = ['bounty', 'courier', 'mining', 'crafting', 'corporate_emergency'];
+    if (!validTypes.includes(type)) {
+        return { error: `Tipo de contrato inválido: '${type}'.` };
+    }
+
+    let originStationId = payload.origin_station_id ? parseInt(payload.origin_station_id, 10) : null;
+    let destStationId = payload.destination_station_id ? parseInt(payload.destination_station_id, 10) : null;
+    let targetItemCode = payload.target_item_code ? parseInt(payload.target_item_code, 10) : null;
+    let targetAmount = Math.max(1, parseInt(payload.target_amount, 10) || 1);
+    let targetPilotUid = payload.target_pilot_uid ? parseInt(payload.target_pilot_uid, 10) : null;
+    let targetCorporationUid = payload.target_corporation_uid ? parseInt(payload.target_corporation_uid, 10) : null;
+
+    if (Number.isNaN(originStationId)) originStationId = null;
+    if (Number.isNaN(destStationId)) destStationId = null;
+    if (Number.isNaN(targetItemCode)) targetItemCode = null;
+    if (Number.isNaN(targetPilotUid)) targetPilotUid = null;
+    if (Number.isNaN(targetCorporationUid)) targetCorporationUid = null;
+
+    if (type === 'bounty') {
+        if (!targetPilotUid) {
+            return { error: 'Para contratos Bounty Hunter, informe o jogador alvo.' };
+        }
+        const pilotRows = await conn.query(
+            "SELECT pilot_uid FROM pilots WHERE pilot_uid = ? LIMIT 1",
+            [targetPilotUid]
+        );
+        if (pilotRows.length === 0) {
+            return { error: 'Jogador alvo selecionado não foi encontrado.' };
+        }
+        targetItemCode = null;
+        targetCorporationUid = null;
+        targetAmount = 1;
+    } else if (type === 'courier') {
+        if (!originStationId || !destStationId) {
+            return { error: 'Para contratos de Entrega (Courier), a estação de origem e a estação de destino são obrigatórias.' };
+        }
+        const stations = await conn.query(
+            "SELECT id FROM orbit_stations WHERE id IN (?, ?)",
+            [originStationId, destStationId]
+        );
+        const foundIds = new Set(stations.map((s) => Number(s.id)));
+        if (!foundIds.has(originStationId) || !foundIds.has(destStationId)) {
+            return { error: 'Estação de origem ou destino inválida.' };
+        }
+        targetPilotUid = null;
+        targetCorporationUid = null;
+    } else if (type === 'mining') {
+        if (!targetItemCode) {
+            return { error: 'Para contratos de Mineração, escolha um item do tipo Ore ou Crystal.' };
+        }
+        const itemRows = await conn.query(
+            `SELECT i.item_code
+             FROM items i
+             INNER JOIN item_groups ig ON ig.group_code = i.group_code
+             WHERE i.item_code = ? AND i.active = 'SIM' AND LOWER(ig.name) IN ('ore', 'crystal', 'cristal')
+             LIMIT 1`,
+            [targetItemCode]
+        );
+        if (itemRows.length === 0) {
+            return { error: 'Item inválido para Mineração. Selecione um item do tipo Ore ou Crystal.' };
+        }
+        if (!parseInt(payload.target_amount, 10) || parseInt(payload.target_amount, 10) < 1) {
+            return { error: 'Informe uma quantidade válida (mínimo 1) para o item de Mineração.' };
+        }
+        targetPilotUid = null;
+        targetCorporationUid = null;
+    } else if (type === 'crafting') {
+        if (!targetItemCode) {
+            return { error: 'Para contratos de Fabricação, escolha o item a ser fabricado.' };
+        }
+        const craftItemRows = await conn.query(
+            `SELECT i.item_code
+             FROM craft_recipes cr
+             INNER JOIN items i ON i.item_code = cr.item_code
+             WHERE i.item_code = ? AND i.active = 'SIM'
+             LIMIT 1`,
+            [targetItemCode]
+        );
+        if (craftItemRows.length === 0) {
+            return { error: 'O item selecionado não possui receita de fabricação ativa.' };
+        }
+        if (!parseInt(payload.target_amount, 10) || parseInt(payload.target_amount, 10) < 1) {
+            return { error: 'Informe uma quantidade válida (mínimo 1) para o item de Fabricação.' };
+        }
+        if (!originStationId) {
+            return { error: 'Para contratos de Fabricação, escolha uma estação de origem do tipo Fábrica.' };
+        }
+        if (!destStationId) {
+            return { error: 'Para contratos de Fabricação, escolha uma estação de destino.' };
+        }
+        const origRows = await conn.query(
+            "SELECT id, station_type FROM orbit_stations WHERE id = ? LIMIT 1",
+            [originStationId]
+        );
+        if (origRows.length === 0 || (origRows[0].station_type || '').toLowerCase() !== 'fabrica') {
+            return { error: 'A estação de origem para contratos de Fabricação deve ser do tipo Fábrica.' };
+        }
+        const destRows = await conn.query(
+            "SELECT id FROM orbit_stations WHERE id = ? LIMIT 1",
+            [destStationId]
+        );
+        if (destRows.length === 0) {
+            return { error: 'Estação de destino inválida.' };
+        }
+        targetPilotUid = null;
+        targetCorporationUid = null;
+    } else if (type === 'corporate_emergency') {
+        if (!targetCorporationUid) {
+            return { error: 'Para Emergência de Corporação, informe a corporação alvo.' };
+        }
+        const corpRows = await conn.query(
+            "SELECT corporation_uid FROM corporations WHERE corporation_uid = ? AND status != 'dissolved' LIMIT 1",
+            [targetCorporationUid]
+        );
+        if (corpRows.length === 0) {
+            return { error: 'Corporação alvo não encontrada ou dissolvida.' };
+        }
+        const killsTarget = parseInt(payload.target_amount, 10);
+        if (!killsTarget || killsTarget < 1) {
+            return { error: 'Para Emergência de Corporação, informe a quantidade de pilotos abatidos (mínimo 1).' };
+        }
+        targetAmount = killsTarget;
+        targetPilotUid = null;
+        targetItemCode = null;
+    }
+
+    return {
+        normalized: {
+            contract_type: type,
+            origin_station_id: originStationId,
+            destination_station_id: destStationId,
+            target_item_code: targetItemCode,
+            target_amount: targetAmount,
+            target_pilot_uid: targetPilotUid,
+            target_corporation_uid: targetCorporationUid,
+            reward_reputation: FIXED_CONTRACT_REPUTATION,
+        }
     };
 };
 
@@ -55,6 +206,8 @@ const getAvailableContracts = async (req, res) => {
                 st_orig.name AS origin_station_name,
                 st_dest.name AS destination_station_name,
                 i.name AS target_item_name,
+                tp.pilot AS target_pilot_name,
+                tc.name AS target_corporation_name,
                 CASE 
                     WHEN c.isuser_type = 'system' THEN 'Governança de Kali'
                     WHEN c.isuser_type = 'corporation' THEN COALESCE(corp.name, 'Corporação')
@@ -65,6 +218,8 @@ const getAvailableContracts = async (req, res) => {
              LEFT JOIN orbit_stations st_orig ON st_orig.id = c.origin_station_id
              LEFT JOIN orbit_stations st_dest ON st_dest.id = c.destination_station_id
              LEFT JOIN items i ON i.item_code = c.target_item_code
+             LEFT JOIN pilots tp ON tp.pilot_uid = c.target_pilot_uid
+             LEFT JOIN corporations tc ON tc.corporation_uid = c.target_corporation_uid
              LEFT JOIN pilots p ON p.pilot_uid = c.isuser_uid AND c.isuser_type = 'pilot'
              LEFT JOIN corporations corp ON corp.corporation_uid = c.isuser_uid AND c.isuser_type = 'corporation'
              WHERE c.status = 'available'
@@ -107,6 +262,8 @@ const getActiveContracts = async (req, res) => {
                 st_orig.name AS origin_station_name,
                 st_dest.name AS destination_station_name,
                 i.name AS target_item_name,
+                tp.pilot AS target_pilot_name,
+                tc.name AS target_corporation_name,
                 CASE 
                     WHEN c.isuser_type = 'system' THEN 'Governança de Kali'
                     WHEN c.isuser_type = 'corporation' THEN COALESCE(corp.name, 'Corporação')
@@ -118,6 +275,8 @@ const getActiveContracts = async (req, res) => {
              LEFT JOIN orbit_stations st_orig ON st_orig.id = c.origin_station_id
              LEFT JOIN orbit_stations st_dest ON st_dest.id = c.destination_station_id
              LEFT JOIN items i ON i.item_code = c.target_item_code
+             LEFT JOIN pilots tp ON tp.pilot_uid = c.target_pilot_uid
+             LEFT JOIN corporations tc ON tc.corporation_uid = c.target_corporation_uid
              LEFT JOIN pilots p ON p.pilot_uid = c.isuser_uid AND c.isuser_type = 'pilot'
              LEFT JOIN corporations corp ON corp.corporation_uid = c.isuser_uid AND c.isuser_type = 'corporation'
              WHERE ca.pilot_uid = ? AND ca.status = 'active'
@@ -140,6 +299,8 @@ const getActiveContracts = async (req, res) => {
  */
 const getIssuerContracts = async (req, res) => {
     const { pilotUid } = req.params;
+    const statusFilter = (req.query.status || '').toString().trim().toLowerCase();
+    const validStatuses = ['available', 'in_progress', 'completed', 'failed', 'cancelled'];
     if (!pilotUid) {
         return res.status(400).json({ status: 'erro', mensagem: 'pilotUid é obrigatório.' });
     }
@@ -148,21 +309,32 @@ const getIssuerContracts = async (req, res) => {
     try {
         conn = await db.getConnection();
 
+        const params = [pilotUid];
+        let whereClause = "c.isuser_type = 'pilot' AND c.isuser_uid = ?";
+        if (statusFilter && validStatuses.includes(statusFilter)) {
+            whereClause += " AND c.status = ?";
+            params.push(statusFilter);
+        }
+
         const rows = await conn.query(
             `SELECT 
                 c.*,
                 st_orig.name AS origin_station_name,
                 st_dest.name AS destination_station_name,
                 i.name AS target_item_name,
+                tp.pilot AS target_pilot_name,
+                tc.name AS target_corporation_name,
                 COALESCE(p.pilot, 'Você') AS issuer_name
              FROM contracts c
              LEFT JOIN orbit_stations st_orig ON st_orig.id = c.origin_station_id
              LEFT JOIN orbit_stations st_dest ON st_dest.id = c.destination_station_id
              LEFT JOIN items i ON i.item_code = c.target_item_code
+             LEFT JOIN pilots tp ON tp.pilot_uid = c.target_pilot_uid
+             LEFT JOIN corporations tc ON tc.corporation_uid = c.target_corporation_uid
              LEFT JOIN pilots p ON p.pilot_uid = c.isuser_uid
-             WHERE c.isuser_type = 'pilot' AND c.isuser_uid = ?
-             ORDER BY c.contract_uid DESC`,
-            [pilotUid]
+             WHERE ${whereClause}
+             ORDER BY FIELD(c.status, 'available', 'in_progress', 'completed', 'failed', 'cancelled'), c.contract_uid DESC`,
+            params
         );
 
         const list = rows.map(formatContract);
@@ -180,7 +352,8 @@ const getIssuerContracts = async (req, res) => {
  */
 const createContract = async (req, res) => {
     const {
-        pilot_uid,
+        pilot_uid: rawPilotUid,
+        issuer_uid,
         title,
         description,
         target_career,
@@ -190,13 +363,15 @@ const createContract = async (req, res) => {
         destination_station_id,
         target_orbit,
         reward_credits,
-        reward_reputation,
         collateral_credits,
         target_item_code,
         target_amount,
+        target_pilot_uid,
+        target_corporation_uid,
         duration_seconds,
         uncancellable
     } = req.body;
+    const pilot_uid = rawPilotUid ?? issuer_uid;
 
     if (!pilot_uid || !title) {
         return res.status(400).json({ status: 'erro', mensagem: 'pilot_uid e title são obrigatórios.' });
@@ -220,6 +395,22 @@ const createContract = async (req, res) => {
     try {
         conn = await db.getConnection();
         await conn.beginTransaction();
+
+        // 0. Validação das regras específicas por tipo de contrato
+        const validation = await validateAndNormalizeContractFields(conn, {
+            contract_type,
+            origin_station_id,
+            destination_station_id,
+            target_item_code,
+            target_amount,
+            target_pilot_uid,
+            target_corporation_uid,
+        });
+        if (validation.error) {
+            await conn.rollback();
+            return res.status(400).json({ status: 'erro', mensagem: validation.error });
+        }
+        const norm = validation.normalized;
 
         // 1. Se houver recompensa em créditos, valida e retém da carteira do contratante
         if (reward > 0) {
@@ -265,28 +456,32 @@ const createContract = async (req, res) => {
                 collateral_credits,
                 target_item_code,
                 target_amount,
+                target_pilot_uid,
+                target_corporation_uid,
                 duration_seconds,
                 uncancellable,
                 status,
                 created_at,
                 expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', NOW(), DATE_ADD(NOW(), INTERVAL ? SECOND))`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', NOW(), DATE_ADD(NOW(), INTERVAL ? SECOND))`,
             [
                 'pilot',
                 pilot_uid,
                 target_career || 'general',
                 Math.max(0, Math.min(5, parseInt(min_career_tier, 10) || 0)),
-                contract_type || 'bounty',
+                norm.contract_type,
                 trimmedTitle,
                 trimmedDesc,
-                origin_station_id ? parseInt(origin_station_id, 10) : null,
-                destination_station_id ? parseInt(destination_station_id, 10) : null,
+                norm.origin_station_id,
+                norm.destination_station_id,
                 target_orbit ? parseInt(target_orbit, 10) : null,
                 reward,
-                Math.max(0, parseInt(reward_reputation, 10) || 0),
+                norm.reward_reputation,
                 collateral,
-                target_item_code ? parseInt(target_item_code, 10) : null,
-                Math.max(1, parseInt(target_amount, 10) || 1),
+                norm.target_item_code,
+                norm.target_amount,
+                norm.target_pilot_uid,
+                norm.target_corporation_uid,
                 duration,
                 uncancellable === 'y' ? 'y' : 'n',
                 duration
@@ -322,7 +517,8 @@ const createContract = async (req, res) => {
 const editContract = async (req, res) => {
     const { contractUid } = req.params;
     const {
-        pilot_uid,
+        pilot_uid: rawPilotUid,
+        issuer_uid,
         title,
         description,
         target_career,
@@ -332,13 +528,15 @@ const editContract = async (req, res) => {
         destination_station_id,
         target_orbit,
         reward_credits,
-        reward_reputation,
         collateral_credits,
         target_item_code,
         target_amount,
+        target_pilot_uid,
+        target_corporation_uid,
         duration_seconds,
         uncancellable
     } = req.body;
+    const pilot_uid = rawPilotUid ?? issuer_uid;
 
     if (!contractUid || !pilot_uid) {
         return res.status(400).json({ status: 'erro', mensagem: 'contractUid e pilot_uid são obrigatórios.' });
@@ -371,6 +569,22 @@ const editContract = async (req, res) => {
                 mensagem: `Não é possível editar um contrato que está no status '${existing.status}'. Apenas contratos disponíveis podem ser alterados.`
             });
         }
+
+        // Valida regras específicas do tipo de contrato
+        const validation = await validateAndNormalizeContractFields(conn, {
+            contract_type: contract_type || existing.contract_type,
+            origin_station_id: origin_station_id !== undefined ? origin_station_id : existing.origin_station_id,
+            destination_station_id: destination_station_id !== undefined ? destination_station_id : existing.destination_station_id,
+            target_item_code: target_item_code !== undefined ? target_item_code : existing.target_item_code,
+            target_amount: target_amount !== undefined ? target_amount : existing.target_amount,
+            target_pilot_uid: target_pilot_uid !== undefined ? target_pilot_uid : existing.target_pilot_uid,
+            target_corporation_uid: target_corporation_uid !== undefined ? target_corporation_uid : existing.target_corporation_uid,
+        });
+        if (validation.error) {
+            await conn.rollback();
+            return res.status(400).json({ status: 'erro', mensagem: validation.error });
+        }
+        const norm = validation.normalized;
 
         const oldReward = Number(existing.reward_credits || 0);
         const newReward = Math.max(0, parseInt(reward_credits, 10) || 0);
@@ -417,6 +631,8 @@ const editContract = async (req, res) => {
                 collateral_credits = ?,
                 target_item_code = ?,
                 target_amount = ?,
+                target_pilot_uid = ?,
+                target_corporation_uid = ?,
                 duration_seconds = ?,
                 uncancellable = ?
              WHERE contract_uid = ?`,
@@ -425,15 +641,17 @@ const editContract = async (req, res) => {
                 trimmedDesc,
                 target_career || existing.target_career,
                 min_career_tier !== undefined ? Math.max(0, Math.min(5, parseInt(min_career_tier, 10))) : existing.min_career_tier,
-                contract_type || existing.contract_type,
-                origin_station_id !== undefined ? (origin_station_id ? parseInt(origin_station_id, 10) : null) : existing.origin_station_id,
-                destination_station_id !== undefined ? (destination_station_id ? parseInt(destination_station_id, 10) : null) : existing.destination_station_id,
+                norm.contract_type,
+                norm.origin_station_id,
+                norm.destination_station_id,
                 target_orbit !== undefined ? (target_orbit ? parseInt(target_orbit, 10) : null) : existing.target_orbit,
                 newReward,
-                reward_reputation !== undefined ? Math.max(0, parseInt(reward_reputation, 10)) : existing.reward_reputation,
+                norm.reward_reputation,
                 collateral_credits !== undefined ? Math.max(0, parseInt(collateral_credits, 10)) : existing.collateral_credits,
-                target_item_code !== undefined ? (target_item_code ? parseInt(target_item_code, 10) : null) : existing.target_item_code,
-                target_amount !== undefined ? Math.max(1, parseInt(target_amount, 10)) : existing.target_amount,
+                norm.target_item_code,
+                norm.target_amount,
+                norm.target_pilot_uid,
+                norm.target_corporation_uid,
                 duration,
                 uncancellable !== undefined ? (uncancellable === 'y' ? 'y' : 'n') : existing.uncancellable,
                 contractUid
@@ -466,7 +684,7 @@ const editContract = async (req, res) => {
  */
 const cancelContract = async (req, res) => {
     const { contractUid } = req.params;
-    const { pilot_uid } = req.body;
+    const pilot_uid = req.body.pilot_uid ?? req.body.issuer_uid;
 
     if (!contractUid || !pilot_uid) {
         return res.status(400).json({ status: 'erro', mensagem: 'contractUid e pilot_uid são obrigatórios.' });
@@ -570,7 +788,7 @@ const cancelContract = async (req, res) => {
  */
 const reactivateContract = async (req, res) => {
     const { contractUid } = req.params;
-    const { pilot_uid } = req.body;
+    const pilot_uid = req.body.pilot_uid ?? req.body.issuer_uid;
 
     if (!contractUid || !pilot_uid) {
         return res.status(400).json({ status: 'erro', mensagem: 'contractUid e pilot_uid são obrigatórios.' });
@@ -658,7 +876,7 @@ const reactivateContract = async (req, res) => {
  */
 const cloneContract = async (req, res) => {
     const { contractUid } = req.params;
-    const { pilot_uid } = req.body;
+    const pilot_uid = req.body.pilot_uid ?? req.body.issuer_uid;
 
     if (!contractUid || !pilot_uid) {
         return res.status(400).json({ status: 'erro', mensagem: 'contractUid e pilot_uid são obrigatórios.' });
@@ -718,12 +936,14 @@ const cloneContract = async (req, res) => {
                 collateral_credits,
                 target_item_code,
                 target_amount,
+                target_pilot_uid,
+                target_corporation_uid,
                 duration_seconds,
                 uncancellable,
                 status,
                 created_at,
                 expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', NOW(), DATE_ADD(NOW(), INTERVAL ? SECOND))`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', NOW(), DATE_ADD(NOW(), INTERVAL ? SECOND))`,
             [
                 'pilot',
                 pilot_uid,
@@ -736,10 +956,12 @@ const cloneContract = async (req, res) => {
                 source.destination_station_id,
                 source.target_orbit,
                 reward,
-                source.reward_reputation,
+                FIXED_CONTRACT_REPUTATION,
                 source.collateral_credits,
                 source.target_item_code,
                 source.target_amount,
+                source.target_pilot_uid,
+                source.target_corporation_uid,
                 duration,
                 source.uncancellable,
                 duration
@@ -1029,6 +1251,158 @@ const abandonContract = async (req, res) => {
     }
 };
 
+/**
+ * 12. Pesquisa de pilotos por parte do nome (para Bounty Hunter)
+ */
+const searchContractPilots = async (req, res) => {
+    const q = (req.query.q || '').toString().trim();
+    const excludeUid = req.query.exclude_uid ? parseInt(req.query.exclude_uid, 10) : null;
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const params = [];
+        let where = '1=1';
+        if (q) {
+            where += ' AND LOWER(p.pilot) LIKE LOWER(?)';
+            params.push(`%${q}%`);
+        }
+        if (excludeUid && !Number.isNaN(excludeUid)) {
+            where += ' AND p.pilot_uid != ?';
+            params.push(excludeUid);
+        }
+
+        const rows = await conn.query(
+            `SELECT p.pilot_uid, p.pilot, COALESCE(c.name, 'Freelancer') AS corporation_name
+             FROM pilots p
+             LEFT JOIN corporation_members cm ON cm.pilot_uid = p.pilot_uid
+             LEFT JOIN corporations c ON c.corporation_uid = cm.corporation_uid
+             WHERE ${where}
+             ORDER BY p.pilot ASC
+             LIMIT 30`,
+            params
+        );
+
+        return res.json({
+            status: 'sucesso',
+            pilots: rows.map((r) => ({
+                pilot_uid: Number(r.pilot_uid),
+                pilot: r.pilot,
+                corporation_name: r.corporation_name,
+            })),
+        });
+    } catch (err) {
+        console.error('[searchContractPilots Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * 13. Pesquisa de corporações por parte do nome (para Emergência de Corporação)
+ */
+const searchContractCorporations = async (req, res) => {
+    const q = (req.query.q || '').toString().trim();
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const params = [];
+        let where = "c.status != 'dissolved'";
+        if (q) {
+            where += ' AND LOWER(c.name) LIKE LOWER(?)';
+            params.push(`%${q}%`);
+        }
+
+        const rows = await conn.query(
+            `SELECT c.corporation_uid, c.name, c.status,
+                    (SELECT COUNT(*) FROM corporation_members cm WHERE cm.corporation_uid = c.corporation_uid) AS member_count
+             FROM corporations c
+             WHERE ${where}
+             ORDER BY c.name ASC
+             LIMIT 30`,
+            params
+        );
+
+        return res.json({
+            status: 'sucesso',
+            corporations: rows.map((r) => ({
+                corporation_uid: Number(r.corporation_uid),
+                name: r.name,
+                status: r.status,
+                member_count: Number(r.member_count || 0),
+            })),
+        });
+    } catch (err) {
+        console.error('[searchContractCorporations Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
+/**
+ * 14. Pesquisa de itens para Mineração (Ore / Crystal) ou Fabricação (craft_recipes)
+ */
+const searchContractItems = async (req, res) => {
+    const q = (req.query.q || '').toString().trim();
+    const mode = (req.query.mode || 'mining').toString().toLowerCase();
+
+    let conn;
+    try {
+        conn = await db.getConnection();
+        const params = [];
+        let sql;
+
+        if (mode === 'crafting') {
+            let where = "i.active = 'SIM'";
+            if (q) {
+                where += ' AND (LOWER(i.name) LIKE LOWER(?) OR LOWER(COALESCE(ig.name, \'\')) LIKE LOWER(?))';
+                params.push(`%${q}%`, `%${q}%`);
+            }
+            sql = `SELECT i.item_code, i.name, i.item_type, COALESCE(ig.name, '') AS group_name, cr.tier
+                   FROM craft_recipes cr
+                   INNER JOIN items i ON i.item_code = cr.item_code
+                   LEFT JOIN item_groups ig ON ig.group_code = i.group_code
+                   WHERE ${where}
+                   ORDER BY i.name ASC
+                   LIMIT 50`;
+        } else {
+            // Mineração: apenas itens cujo grupo seja Ore ou Crystal/Cristal
+            let where = "i.active = 'SIM' AND LOWER(ig.name) IN ('ore', 'crystal', 'cristal')";
+            if (q) {
+                where += ' AND (LOWER(i.name) LIKE LOWER(?) OR LOWER(ig.name) LIKE LOWER(?))';
+                params.push(`%${q}%`, `%${q}%`);
+            }
+            sql = `SELECT i.item_code, i.name, i.item_type, ig.name AS group_name, 0 AS tier
+                   FROM items i
+                   INNER JOIN item_groups ig ON ig.group_code = i.group_code
+                   WHERE ${where}
+                   ORDER BY i.name ASC
+                   LIMIT 50`;
+        }
+
+        const rows = await conn.query(sql, params);
+
+        return res.json({
+            status: 'sucesso',
+            items: rows.map((r) => ({
+                item_code: Number(r.item_code),
+                name: r.name,
+                item_type: Number(r.item_type || 0),
+                group_name: r.group_name || '',
+                tier: Number(r.tier || 0),
+            })),
+        });
+    } catch (err) {
+        console.error('[searchContractItems Error]:', err);
+        return res.status(500).json({ status: 'erro', mensagem: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+};
+
 module.exports = {
     getAvailableContracts,
     getActiveContracts,
@@ -1040,5 +1414,8 @@ module.exports = {
     cloneContract,
     acceptContract,
     deliverContract,
-    abandonContract
+    abandonContract,
+    searchContractPilots,
+    searchContractCorporations,
+    searchContractItems
 };
